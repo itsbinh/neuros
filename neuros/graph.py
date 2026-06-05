@@ -1,116 +1,330 @@
-"""LangGraph agent pipeline: intake → recall → think → act → store → respond."""
+"""LangGraph agent pipeline: intake → recall → [entity_query] → think → act → store → respond."""
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Annotated, Literal
+import time
+from datetime import UTC, datetime
+from typing import Any
 
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
+from langgraph.graph import END, START, StateGraph
 
-from neuros.models import Memory, SearchResult, SkillResult, TaskType
+from neuros.llm.client import chat
+from neuros.llm.selector import select_model
+from neuros.models import NeurOSState, TaskType
 
 logger = logging.getLogger("neuros.graph")
 
-
-class AgentState(BaseModel):
-    """Shared state flowing through the graph."""
-
-    input_text: str = ""
-    image_url: str | None = None
-    session_id: str | None = None
-
-    # recall outputs
-    memories: list[Memory] = Field(default_factory=list)
-    recent_context: list[str] = Field(default_factory=list)
-
-    # think outputs
-    task_type: TaskType = TaskType.REASONING
-    model_name: str = ""
-    llm_response: str = ""
-
-    # act outputs
-    actions_taken: list[SkillResult] = Field(default_factory=list)
-    search_results: list[SearchResult] = Field(default_factory=list)
-
-    # respond output
-    final_response: str = ""
-
-    # messages for langchain compatibility
-    messages: Annotated[list, add_messages] = Field(default_factory=list)
+_ENTITY_QUERY_PATTERNS = (
+    "what do you know about",
+    "tell me about",
+    "what is ",
+    "who is ",
+    "history of",
+    "what changed",
+    "what happened to",
+)
 
 
-# ── Node functions ───────────────────────────────────────────────
-
-async def intake(state: AgentState) -> dict[str, Any]:
-    """Parse input and classify task type."""
-    logger.info("intake: %s", state.input_text[:80])
-    has_image = bool(state.image_url)
-    task_type = TaskType.VISION if has_image else TaskType.REASONING
-
-    return {"task_type": task_type}
+def _is_entity_query(text: str) -> bool:
+    lower = text.lower().strip()
+    return any(lower.startswith(p) or p in lower for p in _ENTITY_QUERY_PATTERNS)
 
 
-async def recall(state: AgentState) -> dict[str, Any]:
-    """Retrieve relevant memories and recent context."""
-    logger.info("recall: searching for '%s'", state.input_text[:60])
-    # TODO: wire up memory_manager.recall() + redis get_recent()
+def _extract_entity_name(text: str) -> str:
+    lower = text.lower().strip()
+    for prefix in sorted(_ENTITY_QUERY_PATTERNS, key=len, reverse=True):
+        if prefix in lower:
+            idx = lower.index(prefix) + len(prefix)
+            return text[idx:].strip().rstrip("?")
+    return text.strip()
+
+
+# ── Node factories ───────────────────────────────────────────────────
+
+
+def _make_recall(memory: Any):
+    async def recall(state: NeurOSState) -> dict:
+        session_id = state.get("session_id", "")
+        input_text = state.get("input", "")
+        context: list[str] = []
+
+        try:
+            results = await memory.recall(input_text, k=3, session_id=session_id)
+            seen: set[str] = set()
+            for r in results:
+                if r.text not in seen:
+                    context.append(r.text)
+                    seen.add(r.text)
+        except Exception as e:
+            logger.warning("recall: failed [session=%s]: %s", session_id, e)
+
+        intent = "entity_query" if _is_entity_query(input_text) else "query"
+        return {"context": context, "intent": intent}
+
+    return recall
+
+
+def _make_entity_query(memory: Any):
+    async def entity_query(state: NeurOSState) -> dict:
+        input_text = state.get("input", "")
+        session_id = state.get("session_id", "")
+        entity_name = _extract_entity_name(input_text)
+        context = list(state.get("context") or [])
+
+        try:
+            entity = await memory.get_entity(entity_name)
+            if entity:
+                summary = entity.summary or ""
+                context.insert(0, f"Entity: {entity.name} ({entity.entity_type}). {summary}")
+        except Exception as e:
+            logger.warning("entity_query: get_entity failed [session=%s]: %s", session_id, e)
+
+        try:
+            graphiti = getattr(memory, "_graphiti", None)
+            relations = await graphiti.get_related(entity_name, max_hops=2) if graphiti else []
+            for rel in relations[:10]:
+                context.append(f"{rel.subject} {rel.predicate} {rel.object}")
+        except Exception as e:
+            logger.warning("entity_query: get_related failed [session=%s]: %s", session_id, e)
+
+        return {"context": context}
+
+    return entity_query
+
+
+def _make_think(memory: Any, registry: Any = None):
+    async def think(state: NeurOSState) -> dict:
+        session_id = state.get("session_id", "")
+        input_text = state.get("input", "")
+        context = state.get("context") or []
+
+        model_config = select_model(TaskType.REASONING)
+
+        messages: list[dict] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are NeurOS, a personal AI assistant. "
+                    "You have access to the user's context and memory. "
+                    "Be direct, concise, and action-oriented."
+                ),
+            }
+        ]
+
+        if context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "Relevant context:\n" + "\n".join(context),
+                }
+            )
+
+        messages.append({"role": "user", "content": input_text})
+
+        start = time.monotonic()
+        tool_schemas = None
+        if registry is not None:
+            tool_schemas = registry.to_tool_schemas()
+
+        try:
+            response = await chat(
+                model=model_config.name,
+                messages=messages,
+                base_url=model_config.base_url,
+                tools=tool_schemas if tool_schemas else None,
+            )
+        except Exception as e:
+            logger.error("think: LLM call failed [session=%s]: %s", session_id, e)
+            response = "I encountered an error generating a response."
+
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        tool_calls = []
+        if isinstance(response, dict):
+            tool_calls = response.get("tool_calls", []) or []
+        elif hasattr(response, "tool_calls"):
+            tool_calls = list(response.tool_calls) if response.tool_calls else []
+
+        return {
+            "response": response,
+            "model_used": model_config.name,
+            "latency_ms": latency_ms,
+            "tool_calls": tool_calls,
+        }
+
+    return think
+
+
+def _make_act(registry: Any, memory: Any):
+    async def act(state: NeurOSState) -> dict:
+        tool_calls = state.get("tool_calls") or []
+        if not tool_calls:
+            return {"skill_results": [], "skill_used": None}
+
+        skill_results: list[Any] = []
+        skill_names: list[str] = []
+        session_id = state.get("session_id", "")
+
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                skill_name = tc.get("name", "") or tc.get("function", {}).get("name", "")
+                args_str = tc.get("args", "") or tc.get("function", {}).get("arguments", "{}")
+            else:
+                fn = getattr(tc, "function", None)
+                skill_name = getattr(tc, "name", None) or (fn and getattr(fn, "name", ""))
+                args_str = getattr(tc, "args", None) or (fn and getattr(fn, "arguments", "{}"))
+
+            try:
+                kwargs = json.loads(args_str) if isinstance(args_str, str) else args_str
+            except (json.JSONDecodeError, TypeError):
+                kwargs = {}
+
+            skill_names.append(skill_name)
+            logger.info("act: executing skill=%s args=%s", skill_name, kwargs)
+
+            result = await registry.execute(skill_name, **kwargs)
+
+            if result.success:
+                skill_results.append(result.output)
+                try:
+                    out_str = json.dumps(result.output) if hasattr(result, "output") else ""
+                    store_msg = f"Executed {skill_name}: {out_str}"
+                    await memory.store(
+                        store_msg,
+                        {"source": "skill", "skill": skill_name, "session_id": session_id},
+                    )
+                except Exception as e:
+                    logger.warning("act: store failed after skill %s: %s", skill_name, e)
+            else:
+                error_msg = getattr(result, "error", str(result)) if result else "unknown error"
+                skill_results.append({"error": error_msg})
+                logger.warning("act: skill %s failed: %s", skill_name, error_msg)
+
+        return {
+            "skill_results": skill_results,
+            "skill_used": ",".join(skill_names),
+        }
+
+    return act
+
+
+def _make_store(memory: Any):
+    async def store(state: NeurOSState) -> dict:
+        session_id = state.get("session_id", "")
+        input_text = state.get("input", "")
+        response = state.get("response", "")
+        model_used = state.get("model_used")
+        latency_ms = state.get("latency_ms")
+        skill_used = state.get("skill_used")
+
+        try:
+            await memory.push_recent(input_text, session_id)
+        except Exception as e:
+            logger.warning("store: push_recent(input) failed [session=%s]: %s", session_id, e)
+
+        try:
+            await memory.push_recent(response, session_id)
+        except Exception as e:
+            logger.warning("store: push_recent(response) failed [session=%s]: %s", session_id, e)
+
+        try:
+            await memory.store(
+                input_text,
+                {
+                    "source": "user",
+                    "session_id": session_id,
+                    "type": "interaction",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
+        except Exception as e:
+            logger.warning("store: memory.store failed [session=%s]: %s", session_id, e)
+
+        if skill_used:
+            try:
+                await memory.store(
+                    f"Used skill {skill_used} in response to: {input_text}",
+                    {
+                        "source": "skill",
+                        "skill": skill_used,
+                        "session_id": session_id,
+                        "type": "skill_execution",
+                    },
+                )
+            except Exception as e:
+                logger.warning("store: skill episode store failed [session=%s]: %s", session_id, e)
+
+        try:
+            await memory.log_interaction(
+                session_id=session_id,
+                input=input_text,
+                output=response,
+                skill_used=skill_used,
+                model_used=model_used,
+                latency_ms=latency_ms,
+            )
+        except Exception as e:
+            logger.warning("store: log_interaction failed [session=%s]: %s", session_id, e)
+
+        return {}
+
+    return store
+
+
+def _make_respond(memory: Any):
+    async def respond(state: NeurOSState) -> dict:
+        text = state.get("response") or "I'm not sure how to help with that."
+        skill_results = state.get("skill_results") or []
+
+        if skill_results:
+            logger.info("respond: %d skill result(s) present", len(skill_results))
+
+        return {"response": text}
+
+    return respond
+
+
+# ── Stateless nodes ──────────────────────────────────────────────────
+
+
+async def intake(state: NeurOSState) -> dict:
+    logger.info("intake: %s", state.get("input", "")[:80])
     return {}
 
 
-async def think(state: AgentState) -> dict[str, Any]:
-    """Route to the correct model and generate response."""
-    logger.info("think: task_type=%s", state.task_type)
-    # TODO: wire up llm.selector + client.chat()
-    return {"llm_response": ""}
+# ── Routing ──────────────────────────────────────────────────────────
 
 
-async def act(state: AgentState) -> dict[str, Any]:
-    """Execute skills based on LLM tool calls."""
-    logger.info("act: processing tool calls")
-    # TODO: wire up skill_registry dispatch
-    return {}
+def _route_after_recall(state: NeurOSState) -> str:
+    return "entity_query" if state.get("intent") == "entity_query" else "think"
 
 
-async def store(state: AgentState) -> dict[str, Any]:
-    """Persist interaction to memory layer."""
-    logger.info("store: saving interaction")
-    # TODO: wire up memory_manager.store() + log_interaction()
-    return {}
+# ── Graph construction ───────────────────────────────────────────────
 
 
-async def respond(state: AgentState) -> dict[str, Any]:
-    """Format final response for the user."""
-    text = state.llm_response or "I'm not sure how to help with that."
-    return {"final_response": text}
+def build_graph(memory: Any, registry: Any = None) -> Any:
+    """Build and compile the agent pipeline with memory and registry injected."""
+    graph = StateGraph(NeurOSState)
 
-
-# ── Graph construction ───────────────────────────────────────────
-
-def build_graph() -> StateGraph:
-    """Build and compile the agent pipeline."""
-    graph = StateGraph(AgentState)
-
-    # Add nodes
     graph.add_node("intake", intake)
-    graph.add_node("recall", recall)
-    graph.add_node("think", think)
-    graph.add_node("act", act)
-    graph.add_node("store", store)
-    graph.add_node("respond", respond)
+    graph.add_node("recall", _make_recall(memory))
+    graph.add_node("entity_query", _make_entity_query(memory))
+    graph.add_node("think", _make_think(memory, registry))
+    graph.add_node("act", _make_act(registry, memory))
+    graph.add_node("store", _make_store(memory))
+    graph.add_node("respond", _make_respond(memory))
 
-    # Define flow
     graph.add_edge(START, "intake")
     graph.add_edge("intake", "recall")
-    graph.add_edge("recall", "think")
+    graph.add_conditional_edges(
+        "recall", _route_after_recall, {"entity_query": "entity_query", "think": "think"}
+    )
+    graph.add_edge("entity_query", "think")
     graph.add_edge("think", "act")
     graph.add_edge("act", "store")
     graph.add_edge("store", "respond")
     graph.add_edge("respond", END)
 
     return graph.compile()
-
-
-# Compiled graph instance
-graph = build_graph()

@@ -1,111 +1,210 @@
-"""Unified memory manager — orchestrates Qdrant, Redis, and Postgres."""
+"""Unified memory manager — orchestrates Qdrant, Redis, Postgres, and Graphiti."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import uuid
+from typing import Any
 
-from neuros.llm.embedder import embed
-from neuros.memory.postgres import Interaction, get_session, init_db
-from neuros.memory.qdrant import store as qdrant_store
-from neuros.memory.redis import cache as redis_cache
-from neuros.models import Memory
+from neuros.memory.postgres import PostgresStore
+from neuros.memory.qdrant import QdrantStore
+from neuros.memory.redis import RedisStore
+from neuros.models import GraphEntity, MemoryResult, TimelineEvent
 
 logger = logging.getLogger("neuros.memory.manager")
 
+# Module-level singleton — set by main.py lifespan before any skill runs.
+manager: MemoryManager | None = None
+
 
 class MemoryManager:
-    """Unified interface over all memory backends."""
+    """Single interface the graph nodes use. Nothing in graph.py imports stores directly."""
 
-    async def initialize(self) -> None:
-        """Initialize all storage backends."""
-        await init_db()
-        await qdrant_store.ensure_collection()
-        await redis_cache.connect()
-        logger.info("Memory layer initialized")
-
-    # ── Core operations ──────────────────────────────────────────
-
-    async def store(
+    def __init__(
         self,
-        text: str,
-        *,
-        source: str | None = None,
-        tags: list[str] | None = None,
-        session_id: str | None = None,
-    ) -> str:
-        """Embed and store text in Qdrant. Returns memory ID."""
-        vector = await embed(text)
-        item_id = str(uuid.uuid4())
-        await qdrant_store.upsert(
-            text=text,
-            vector=vector,
-            item_id=item_id,
-            source=source,
-            tags=tags,
-            session_id=session_id,
-        )
-        return item_id
+        qdrant: QdrantStore,
+        redis: RedisStore,
+        postgres: PostgresStore,
+        graphiti: Any | None = None,
+    ) -> None:
+        self._qdrant = qdrant
+        self._redis = redis
+        self._postgres = postgres
+        self._graphiti = graphiti
 
-    async def recall(self, query: str, k: int = 5) -> list[Memory]:
-        """Semantic search via Qdrant. Returns ranked Memory objects."""
-        vector = await embed(query)
-        results = await qdrant_store.search(vector, k=k)
-        return [
-            Memory(
-                id=str(r.get("id", "")),
-                text=r.get("text", ""),
-                source=r.get("source"),
-                tags=r.get("tags", []),
-                score=r.get("score"),
+    async def store(self, text: str, metadata: dict) -> str:
+        """Embed and upsert text to Qdrant + add episode to Graphiti concurrently."""
+        source = metadata.get("source", "user")
+        session_id = metadata.get("session_id", "default")
+
+        tasks = [self._qdrant.upsert(text, metadata)]
+        if self._graphiti:
+            tasks.append(
+                self._graphiti.add_episode(text, session_id, source=source, metadata=metadata)
             )
-            for r in results
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        qdrant_result = results[0]
+        if isinstance(qdrant_result, Exception):
+            logger.warning("store: qdrant upsert failed: %s", qdrant_result)
+            qdrant_result = ""
+        if self._graphiti and len(results) > 1 and isinstance(results[1], Exception):
+            logger.warning("store: graphiti add_episode failed: %s", results[1])
+
+        return str(qdrant_result)
+
+    async def recall(
+        self, query: str, k: int = 5, session_id: str = "default"
+    ) -> list[MemoryResult]:
+        """Merge Qdrant + Graphiti + Redis recent, deduplicated, top-k."""
+        tasks = [
+            self._qdrant.search(query, k=k),
+            self._redis.get_recent(session_id, n=5),
         ]
+        if self._graphiti:
+            tasks.append(self._graphiti.search(query, k=max(2, k // 2)))
 
-    # ── Context (Redis) ──────────────────────────────────────────
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def set_context(self, key: str, value: str, ttl: int = 3600) -> None:
-        """Store short-lived context."""
-        await redis_cache.set_context(key, value, ttl=ttl)
+        r0 = results[0]
+        qdrant_results: list[MemoryResult] = [] if isinstance(r0, Exception) else r0
+        if isinstance(r0, Exception):
+            logger.warning("recall: qdrant search failed: %s", r0)
 
-    async def get_context(self, key: str) -> str | None:
-        """Retrieve short-lived context."""
-        return await redis_cache.get_context(key)
+        recent_strs: list[str] = results[1] if not isinstance(results[1], Exception) else []
+        if isinstance(results[1], Exception):
+            logger.warning("recall: redis get_recent failed: %s", results[1])
 
-    # ── Logging (Postgres) ───────────────────────────────────────
+        graph_results = []
+        if self._graphiti:
+            raw = results[2] if len(results) > 2 else []
+            if isinstance(raw, Exception):
+                logger.warning("recall: graphiti search failed: %s", raw)
+            else:
+                for gr in raw:
+                    graph_results.append(
+                        MemoryResult(
+                            id=f"graph:{gr.content[:16]}",
+                            text=gr.content,
+                            score=gr.score,
+                            metadata={"source": "graphiti", "entity_names": gr.entity_names},
+                        )
+                    )
+
+        # Merge: recent first, then graph, then qdrant; deduplicate by first 100 chars
+        merged: list[MemoryResult] = []
+        seen: set[str] = set()
+
+        for text in recent_strs:
+            key = text[:100]
+            if key not in seen:
+                seen.add(key)
+                merged.append(
+                    MemoryResult(id="recent", text=text, score=1.0, metadata={"source": "redis"})
+                )
+
+        for r in graph_results:
+            key = r.text[:100]
+            if key not in seen:
+                seen.add(key)
+                merged.append(r)
+
+        for r in qdrant_results:
+            key = r.text[:100]
+            if key not in seen:
+                seen.add(key)
+                merged.append(r)
+
+        return merged[:k]
+
+    async def remember_entity(self, text: str, session_id: str = "default") -> str:
+        """Explicitly store fact in both Graphiti and Qdrant. Returns episode_id."""
+        episode_id = None
+        if self._graphiti:
+            episode_id = await self._graphiti.add_episode(
+                text, session_id, source="user", metadata={}
+            )
+        await self._qdrant.upsert(
+            text, {"source": "user", "session_id": session_id, "type": "explicit_memory"}
+        )
+        return episode_id or ""
+
+    async def get_entity(self, name: str) -> GraphEntity | None:
+        if not self._graphiti:
+            return None
+        return await self._graphiti.get_entity(name)
+
+    async def entity_timeline(self, entity_name: str, limit: int = 20) -> list[TimelineEvent]:
+        if not self._graphiti:
+            return []
+        return await self._graphiti.entity_timeline(entity_name, limit=limit)
+
+    async def invalidate_fact(self, subject: str, predicate: str, reason: str) -> bool:
+        if not self._graphiti:
+            return False
+        return await self._graphiti.invalidate_fact(subject, predicate, reason)
+
+    async def set_context(self, key: str, val: Any, ttl: int = 3600) -> None:
+        await self._redis.set_context(key, val, ttl=ttl)
+
+    async def get_context(self, key: str) -> Any | None:
+        return await self._redis.get_context(key)
+
+    async def push_recent(self, text: str, session_id: str) -> None:
+        await self._redis.push_recent(text, session_id)
+
+    async def get_recent(self, session_id: str, n: int = 5) -> list[str]:
+        return await self._redis.get_recent(session_id, n=n)
 
     async def log_interaction(
         self,
-        input_text: str,
-        output_text: str,
+        session_id: str,
+        input: str,
+        output: str,
         skill_used: str | None = None,
-    ) -> None:
-        """Persist an interaction record to Postgres."""
-        session = await get_session()
+        model_used: str | None = None,
+        latency_ms: int | None = None,
+    ) -> str:
+        return await self._postgres.log_interaction(
+            session_id=session_id,
+            input=input,
+            output=output,
+            skill_used=skill_used,
+            model_used=model_used,
+            latency_ms=latency_ms,
+        )
+
+    async def health(self) -> dict:
+        result: dict[str, Any] = {}
+
         try:
-            record = Interaction(
-                input_text=input_text[:4096],
-                output_text=output_text[:4096],
-                skill=skill_used,
-            )
-            session.add(record)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            logger.exception("Failed to log interaction")
-        finally:
-            await session.close()
+            await self._qdrant.collection_info()
+            result["qdrant"] = "ok"
+        except Exception as e:
+            logger.warning("Qdrant health check failed: %s", e)
+            result["qdrant"] = "error"
 
-    # ── Recent context (Redis rolling window) ────────────────────
+        try:
+            if self._redis._client:
+                await self._redis._client.ping()
+                result["redis"] = "ok"
+            else:
+                result["redis"] = "error"
+        except Exception as e:
+            logger.warning("Redis health check failed: %s", e)
+            result["redis"] = "error"
 
-    async def push_recent(self, text: str, session_id: str = "default") -> None:
-        """Push into the recent interactions rolling window."""
-        await redis_cache.push_recent(text, session_id=session_id)
+        try:
+            await self._postgres.recent_interactions(n=1)
+            result["postgres"] = "ok"
+        except Exception as e:
+            logger.warning("Postgres health check failed: %s", e)
+            result["postgres"] = "error"
 
-    async def get_recent(self, n: int = 10, session_id: str = "default") -> list[str]:
-        """Get N most recent interactions."""
-        return await redis_cache.get_recent(n, session_id=session_id)
+        if self._graphiti:
+            result["graphiti"] = await self._graphiti.health()
+        else:
+            result["graphiti"] = {"status": "disabled"}
 
-
-# Module-level singleton
-manager = MemoryManager()
+        return result

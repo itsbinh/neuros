@@ -1,7 +1,7 @@
-.PHONY: dev setup test-stack test lint fmt overlay-install
+.PHONY: dev setup test-stack test-graphiti neo4j-shell graph-stats test lint fmt overlay-install
 
 dev:
-	uvicorn neuros.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn neuros.main:app --reload --host 127.0.0.1 --port 8002
 
 setup:
 	python scripts/setup_db.py
@@ -10,6 +10,25 @@ test-stack:
 	python scripts/test_inference.py
 	python scripts/test_embed.py
 	python scripts/test_memory.py
+	python scripts/test_graphiti.py
+
+test-graphiti:
+	python scripts/test_graphiti.py
+
+neo4j-shell:
+	docker exec -it neo4j cypher-shell -u neo4j -p neuros_neo4j_pass
+
+graph-stats:
+	python -c "\
+import asyncio; \
+from neuros.memory.graphiti_store import GraphitiStore; \
+from neuros.config import settings; \
+s = settings; \
+async def main(): \
+    g = GraphitiStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password, s.lts1_base_url, s.model_fast, embed_base_url=s.lts1_embed_url); \
+    h = await g.health(); \
+    print(h); \
+asyncio.run(main())"
 
 test:
 	pytest tests/

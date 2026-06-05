@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 
 class TaskType(str, Enum):
@@ -17,24 +18,24 @@ class TaskType(str, Enum):
 
 class QueryInput(BaseModel):
     text: str = Field(..., description="User query text")
-    image_url: Optional[str] = None
-    session_id: Optional[str] = None
+    image_url: str | None = None
+    session_id: str | None = None
 
 
 class ActionInput(BaseModel):
     skill: str = Field(..., description="Skill name to invoke")
     params: dict[str, Any] = Field(default_factory=dict)
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 class Memory(BaseModel):
     id: str
     text: str
-    source: Optional[str] = None
+    source: str | None = None
     tags: list[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    session_id: Optional[str] = None
-    score: Optional[float] = None
+    session_id: str | None = None
+    score: float | None = None
 
 
 class SearchResult(BaseModel):
@@ -46,8 +47,8 @@ class SearchResult(BaseModel):
 
 class SkillResult(BaseModel):
     success: bool
-    data: Optional[Any] = None
-    error: Optional[str] = None
+    data: Any | None = None
+    error: str | None = None
 
 
 class NeurOSResponse(BaseModel):
@@ -55,5 +56,65 @@ class NeurOSResponse(BaseModel):
     memories: list[Memory] = Field(default_factory=list)
     search_results: list[SearchResult] = Field(default_factory=list)
     actions_taken: list[SkillResult] = Field(default_factory=list)
-    model_used: Optional[str] = None
-    session_id: Optional[str] = None
+    model_used: str | None = None
+    session_id: str | None = None
+
+
+class MemoryResult(BaseModel):
+    """Single result from semantic memory search."""
+
+    id: str
+    text: str
+    score: float
+    metadata: dict = Field(default_factory=dict)
+    timestamp: str | None = None
+
+
+class GraphMemoryResult(BaseModel):
+    content: str
+    score: float
+    entity_names: list[str] = Field(default_factory=list)
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    source: str = ""
+
+
+class GraphEntity(BaseModel):
+    uuid: str
+    name: str
+    entity_type: str
+    summary: str | None = None
+    created_at: datetime
+
+
+class GraphRelation(BaseModel):
+    subject: str
+    predicate: str
+    object: str
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    episode_id: str = ""
+
+
+class TimelineEvent(BaseModel):
+    timestamp: datetime
+    fact: str
+    source: str = ""
+    still_valid: bool = True
+
+
+class NeurOSState(TypedDict, total=False):
+    """LangGraph state flowing through the agent pipeline."""
+
+    input: str
+    session_id: str
+    context: list[str]
+    response: str
+    tool_calls: list[dict]
+    skill_result: Any
+    skill_results: list[Any]
+    skill_used: str | None
+    model_used: str
+    latency_ms: int
+    intent: str
+    error: str | None
