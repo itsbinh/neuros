@@ -66,26 +66,25 @@ class ApplyChangeSkill(BaseSkill):
             await postgres.update_proposal_status(proposal_id, "failed", test_result=str(e))
             return SkillResult.fail(f"Write failed: {e}")
 
-        test_paths = proposal.tests_affected or ["tests/"]
         tester = RunTestsSkill()
-        tests_passed = True
-        test_output_parts: list[str] = []
-        for tp in test_paths:
-            tr = await tester.run(test_path=tp)
-            if not tr.success:
-                tests_passed = False
-                test_output_parts.append(f"[{tp}] {tr.error}")
-                break
-            data = tr.data or {}
-            test_output_parts.append(
-                f"[{tp}] passed={data.get('passed', 0)} failed={data.get('failed', 0)}"
-            )
-            if not data.get("success"):
-                tests_passed = False
-                test_output_parts.append(data.get("output", ""))
-                break
+        test_paths = proposal.tests_affected or ["tests/"]
+        test_result = await tester.run(test_path=test_paths)
 
-        test_output = "\n".join(test_output_parts)
+        test_data = test_result.data or {}
+        output_text = (test_data.get("output") or "").lower() if isinstance(test_data, dict) else ""
+        if (
+            isinstance(test_data, dict)
+            and not test_data.get("success")
+            and ("no tests ran" in output_text or "collected 0 items" in output_text)
+        ):
+            logger.warning(
+                "Specified tests not found — running full suite for safety check"
+            )
+            test_result = await tester.run(test_path="tests/")
+            test_data = test_result.data or {}
+
+        tests_passed = bool(test_data.get("success"))
+        test_output = test_data.get("output", "") if isinstance(test_data, dict) else ""
 
         if tests_passed:
             backup_path.unlink(missing_ok=True)

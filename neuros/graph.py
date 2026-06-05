@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,18 @@ from neuros.llm.selector import select_model
 from neuros.models import NeurOSState, TaskType
 
 logger = logging.getLogger("neuros.graph")
+
+
+@dataclass
+class AgentState:
+    """Compatibility state used by legacy graph unit tests."""
+
+    input_text: str = ""
+    image_url: str | None = None
+    memories: list[str] = field(default_factory=list)
+    actions_taken: list[Any] = field(default_factory=list)
+    final_response: str = ""
+    llm_response: str = ""
 
 _ENTITY_QUERY_PATTERNS = (
     "what do you know about",
@@ -533,8 +546,16 @@ def _make_dogfood(memory: Any):
 # ── Stateless nodes ──────────────────────────────────────────────────
 
 
-async def intake(state: NeurOSState) -> dict:
-    logger.info("intake: %s", state.get("input", "")[:80])
+async def intake(state: NeurOSState | AgentState) -> dict:
+    if isinstance(state, dict):
+        logger.info("intake: %s", state.get("input", "")[:80])
+        return {}
+
+    if getattr(state, "input_text", None) is not None:
+        task_type = TaskType.VISION if getattr(state, "image_url", None) else TaskType.REASONING
+        return {"task_type": task_type}
+
+    logger.info("intake: %s", getattr(state, "input", "")[:80])
     return {}
 
 
@@ -551,7 +572,13 @@ def _route_after_recall(state: NeurOSState) -> str:
 # ── Graph construction ───────────────────────────────────────────────
 
 
-def build_graph(memory: Any, registry: Any = None) -> Any:
+async def respond(state: AgentState) -> dict:
+    """Compatibility wrapper for legacy graph tests."""
+    text = state.llm_response or "I'm not sure how to help with that."
+    return {"final_response": text}
+
+
+def build_graph(memory: Any = None, registry: Any = None) -> Any:
     """Build and compile the agent pipeline with memory and registry injected."""
     graph = StateGraph(NeurOSState)
 

@@ -6,7 +6,9 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
+from neuros.config import settings
 from neuros.llm.client import chat
 from neuros.llm.selector import select_model
 from neuros.models import ProposedChange, TaskType
@@ -60,6 +62,16 @@ def _parse_response(text: str) -> dict | None:
     }
 
 
+def _find_closest_test(proposed: str, real_files: list[str]) -> str | None:
+    """Find closest real test file by substring match on stem."""
+    proposed_stem = Path(proposed).stem.replace("test_", "")
+    for real in real_files:
+        real_stem = Path(real).stem.replace("test_", "")
+        if proposed_stem in real_stem or real_stem in proposed_stem:
+            return real
+    return None
+
+
 @skill("propose_improvement", "Analyze a NeurOS file and propose a specific improvement")
 class ProposeImprovementSkill(BaseSkill):
     async def run(self, **params) -> SkillResult:
@@ -76,12 +88,27 @@ class ProposeImprovementSkill(BaseSkill):
             return read_result
 
         content = read_result.data["content"]
+        project_root = Path(settings.project_root)
+        tests_dir = project_root / "tests"
+        test_files = sorted(
+            [
+                f.name
+                for f in tests_dir.iterdir()
+                if f.is_file() and f.name.startswith("test_") and f.suffix == ".py"
+            ]
+        ) if tests_dir.exists() else []
 
         user_prompt = (
             f"File: {path}\n"
             f"Aspect to improve: {aspect}\n"
             f"Specific instruction: {instruction or '(none)'}\n\n"
             f"Current content:\n{content[:18000]}\n\n"
+            "IMPORTANT — test file constraint:\n"
+            "The following test files actually exist in this project:\n"
+            f"{chr(10).join(test_files)}\n\n"
+            "TESTS_AFFECTED must ONLY reference files from the list above.\n"
+            'If no existing test file covers the changed code, use "tests/test_dogfood.py".\n'
+            "Never invent test file names.\n\n"
             "Respond in this EXACT format:\n\n"
             "SUMMARY: <one sentence what this change does>\n"
             "REASON: <one sentence why this improves NeurOS>\n"
@@ -114,6 +141,20 @@ class ProposeImprovementSkill(BaseSkill):
                 f"Could not parse improvement response. Raw:\n{response[:500]}"
             )
 
+        validated_tests: list[str] = []
+        for test_name in parsed["tests_affected"]:
+            test_path = project_root / test_name
+            if test_path.exists():
+                validated_tests.append(test_name)
+                continue
+
+            closest = _find_closest_test(test_name, test_files)
+            if closest:
+                validated_tests.append(f"tests/{closest}")
+
+        if not validated_tests:
+            validated_tests = ["tests/test_dogfood.py"]
+
         proposal = ProposedChange(
             id=str(uuid.uuid4()),
             path=path,
@@ -122,7 +163,7 @@ class ProposeImprovementSkill(BaseSkill):
             risk=parsed["risk"],
             original=parsed["original"],
             replacement=parsed["replacement"],
-            tests_affected=parsed["tests_affected"],
+            tests_affected=validated_tests,
             proposed_at=datetime.now(timezone.utc),
             status="pending",
         )

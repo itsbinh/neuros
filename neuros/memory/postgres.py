@@ -36,6 +36,22 @@ class Interaction(Base):
     latency_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    @property
+    def input_text(self) -> str:
+        return self.input
+
+    @property
+    def output_text(self) -> str:
+        return self.output
+
+    @property
+    def skill(self) -> str | None:
+        return self.skill_used
+
+    @property
+    def ts(self):
+        return self.created_at
+
 
 class Fact(Base):
     __tablename__ = "facts"

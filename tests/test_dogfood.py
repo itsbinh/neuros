@@ -13,11 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from neuros.config import settings
 from neuros.models import ProposedChange
+from neuros.skills.base import SkillResult
 from neuros.skills.code import _safety
 from neuros.skills.code.applier import ApplyChangeSkill
 from neuros.skills.code.git_ops import GitCommitSkill, GitPushSkill
-from neuros.skills.code.improver import _parse_response
+from neuros.skills.code.improver import ProposeImprovementSkill, _find_closest_test, _parse_response
 from neuros.skills.code.reader import (
     ListFilesSkill,
     ReadFileSkill,
@@ -31,6 +33,12 @@ def fake_root(tmp_path, monkeypatch):
     """Point project_root at a tmp dir so file ops are isolated."""
     monkeypatch.setattr(_safety, "project_root", lambda: tmp_path.resolve())
     return tmp_path
+
+
+@pytest.fixture
+def project_settings_root(fake_root, monkeypatch):
+    monkeypatch.setattr(settings, "project_root", str(fake_root))
+    return fake_root
 
 
 # ── reader.ReadFileSkill ─────────────────────────────────────────────
@@ -126,6 +134,66 @@ def test_propose_improvement_parser_rejects_malformed():
     assert _parse_response("not the right format at all") is None
 
 
+def test_find_closest_test_matches_by_stem():
+    real_files = ["test_memory.py", "test_graph.py"]
+    assert _find_closest_test("tests/test_memory_manager.py", real_files) == "test_memory.py"
+
+
+def test_find_closest_test_no_match_returns_none():
+    real_files = ["test_memory.py", "test_graph.py"]
+    assert _find_closest_test("tests/test_completely_made_up.py", real_files) is None
+
+
+@pytest.mark.asyncio
+async def test_propose_improvement_validates_test_files_exist(project_settings_root, monkeypatch):
+    project_root = project_settings_root
+    tests_dir = project_root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_memory.py").write_text("")
+    code_dir = project_root / "neuros" / "memory"
+    code_dir.mkdir(parents=True)
+    (code_dir / "manager.py").write_text("print('x')\n")
+
+    raw = (
+        "SUMMARY: Add better error handling\n"
+        "REASON: Makes failures clearer\n"
+        "RISK: low\n"
+        "ORIGINAL:\nprint('x')\n"
+        "REPLACEMENT:\nprint('y')\n"
+        "TESTS_AFFECTED: tests/test_memory_manager.py"
+    )
+    monkeypatch.setattr("neuros.skills.code.improver.chat", AsyncMock(return_value=raw))
+
+    result = await ProposeImprovementSkill().run(path="neuros/memory/manager.py")
+    assert result.success
+    assert result.data["tests_affected"] == ["tests/test_memory.py"]
+
+
+@pytest.mark.asyncio
+async def test_propose_improvement_falls_back_to_test_dogfood(project_settings_root, monkeypatch):
+    project_root = project_settings_root
+    tests_dir = project_root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_dogfood.py").write_text("")
+    code_dir = project_root / "neuros" / "memory"
+    code_dir.mkdir(parents=True)
+    (code_dir / "manager.py").write_text("print('x')\n")
+
+    raw = (
+        "SUMMARY: Add better error handling\n"
+        "REASON: Makes failures clearer\n"
+        "RISK: low\n"
+        "ORIGINAL:\nprint('x')\n"
+        "REPLACEMENT:\nprint('y')\n"
+        "TESTS_AFFECTED: tests/test_completely_made_up.py"
+    )
+    monkeypatch.setattr("neuros.skills.code.improver.chat", AsyncMock(return_value=raw))
+
+    result = await ProposeImprovementSkill().run(path="neuros/memory/manager.py")
+    assert result.success
+    assert result.data["tests_affected"] == ["tests/test_dogfood.py"]
+
+
 # ── applier ──────────────────────────────────────────────────────────
 
 
@@ -212,6 +280,71 @@ async def test_apply_change_restores_backup_on_test_failure(fake_root):
 
 
 @pytest.mark.asyncio
+async def test_apply_change_no_tests_collected_falls_back_to_full_suite(fake_root):
+    f = fake_root / "m.py"
+    f.write_text("original\n")
+    proposal = _make_proposal("m.py", "original", "replaced")
+
+    mock_pg = MagicMock()
+    mock_pg.get_proposal = AsyncMock(return_value=proposal)
+    mock_pg.update_proposal_status = AsyncMock()
+    mock_mgr = MagicMock(_postgres=mock_pg)
+
+    no_tests = SkillResult.ok(
+        {"passed": 0, "failed": 0, "success": False, "output": "collected 0 items"},
+        skill_name="run_tests",
+    )
+    full_suite = SkillResult.ok(
+        {"passed": 3, "failed": 0, "success": True, "output": "all good"},
+        skill_name="run_tests",
+    )
+
+    with patch("neuros.memory.manager.manager", mock_mgr), \
+         patch.object(RunTestsSkill, "run", AsyncMock(side_effect=[no_tests, full_suite])):
+        result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
+
+    assert result.success
+    assert result.data["applied"] is True
+    assert result.data["tests_passed"] is True
+    assert f.read_text() == "replaced\n"
+    backups = list(fake_root.glob("m.py.neuros_backup_*"))
+    assert backups == []
+
+
+@pytest.mark.asyncio
+async def test_apply_change_full_suite_fails_after_fallback(fake_root):
+    f = fake_root / "m.py"
+    f.write_text("original\n")
+    proposal = _make_proposal("m.py", "original", "replaced")
+
+    mock_pg = MagicMock()
+    mock_pg.get_proposal = AsyncMock(return_value=proposal)
+    mock_pg.update_proposal_status = AsyncMock()
+    mock_mgr = MagicMock(_postgres=mock_pg)
+
+    no_tests = SkillResult.ok(
+        {"passed": 0, "failed": 0, "success": False, "output": "no tests ran"},
+        skill_name="run_tests",
+    )
+    full_suite = SkillResult.ok(
+        {"passed": 1, "failed": 1, "success": False, "output": "FAILED"},
+        skill_name="run_tests",
+    )
+
+    with patch("neuros.memory.manager.manager", mock_mgr), \
+         patch.object(RunTestsSkill, "run", AsyncMock(side_effect=[no_tests, full_suite])):
+        result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
+
+    assert result.success
+    assert result.data["applied"] is False
+    assert result.data["tests_passed"] is False
+    assert "FAILED" in result.data["test_output"]
+    assert f.read_text() == "original\n"
+    backups = list(fake_root.glob("m.py.neuros_backup_*"))
+    assert backups == []
+
+
+@pytest.mark.asyncio
 async def test_apply_change_deletes_backup_on_success(fake_root):
     f = fake_root / "m.py"
     f.write_text("original\n")
@@ -261,6 +394,96 @@ async def test_run_tests_timeout_handled(fake_root, monkeypatch):
     result = await RunTestsSkill().run(test_path="tests/")
     assert not result.success
     assert "timed out" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_tests_nonexistent_path_runs_full_suite(project_settings_root, monkeypatch):
+    project_root = project_settings_root
+    (project_root / "tests").mkdir()
+
+    calls: list[tuple] = []
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        fake_proc = MagicMock()
+        fake_proc.communicate = AsyncMock(
+            return_value=(
+                b"============================= 1 passed in 0.1s =============================",
+                b"",
+            )
+        )
+        fake_proc.returncode = 0
+        return fake_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    result = await RunTestsSkill().run(test_path="tests/test_missing.py")
+    assert result.success
+    assert calls
+    assert "tests/" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_run_tests_no_tests_collected_reruns_full_suite(project_settings_root, monkeypatch):
+    project_root = project_settings_root
+    tests_dir = project_root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_empty.py").write_text("")
+
+    calls: list[tuple] = []
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        fake_proc = MagicMock()
+        if len(calls) == 1:
+            fake_proc.communicate = AsyncMock(return_value=(b"collected 0 items", b""))
+            fake_proc.returncode = 5
+        else:
+            fake_proc.communicate = AsyncMock(
+                return_value=(
+                    b"============================= 2 passed in 0.2s =============================",
+                    b"",
+                )
+            )
+            fake_proc.returncode = 0
+        return fake_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    result = await RunTestsSkill().run(test_path="tests/test_empty.py")
+    assert result.success
+    assert len(calls) == 2
+    assert "tests/test_empty.py" in calls[0]
+    assert "tests/" in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_run_tests_missing_list_paths_falls_back_to_full_suite(project_settings_root, monkeypatch):
+    project_root = project_settings_root
+    (project_root / "tests").mkdir()
+
+    calls: list[tuple] = []
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        fake_proc = MagicMock()
+        fake_proc.communicate = AsyncMock(
+            return_value=(
+                b"============================= 4 passed in 0.2s =============================",
+                b"",
+            )
+        )
+        fake_proc.returncode = 0
+        return fake_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    result = await RunTestsSkill().run(
+        test_path=["tests/test_missing_a.py", "tests/test_missing_b.py"]
+    )
+    assert result.success
+    assert calls
+    assert "tests/" in calls[0]
 
 
 # ── git ──────────────────────────────────────────────────────────────

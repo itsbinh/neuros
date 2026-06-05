@@ -50,6 +50,14 @@ class SkillResult(BaseModel):
     data: Any | None = None
     error: str | None = None
 
+    @property
+    def output(self) -> Any | None:
+        return self.data
+
+    @output.setter
+    def output(self, value: Any | None) -> None:
+        self.data = value
+
 
 class NeurOSResponse(BaseModel):
     text: str
