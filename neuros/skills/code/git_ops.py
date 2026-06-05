@@ -7,7 +7,8 @@ import logging
 import re
 
 from neuros.skills.base import BaseSkill, SkillResult, skill
-from neuros.skills.code._safety import project_root, resolve_safe
+from neuros.skills.code import _safety
+from neuros.skills.code._safety import resolve_safe
 
 logger = logging.getLogger("neuros.skills.code.git_ops")
 
@@ -16,7 +17,7 @@ async def _git(*args: str, timeout: float = 30.0) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         "git",
         *args,
-        cwd=str(project_root()),
+        cwd=str(_safety.project_root()),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

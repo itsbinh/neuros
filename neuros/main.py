@@ -128,6 +128,52 @@ async def query(input: QueryInput) -> NeurOSResponse:
     )
 
 
+@app.get("/proposals")
+async def proposals_list(status: str | None = None, limit: int = 20) -> list[dict]:
+    postgres = app.state.memory._postgres
+    items = await postgres.list_proposals(status=status, limit=limit)
+    return [p.model_dump(mode="json") for p in items]
+
+
+@app.get("/proposals/{proposal_id}")
+async def proposals_get(proposal_id: str) -> dict:
+    postgres = app.state.memory._postgres
+    p = await postgres.get_proposal(proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    return p.model_dump(mode="json")
+
+
+@app.post("/proposals/{proposal_id}/approve")
+async def proposals_approve(proposal_id: str) -> dict:
+    postgres = app.state.memory._postgres
+    if await postgres.get_proposal(proposal_id) is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    await postgres.update_proposal_status(proposal_id, "approved")
+    p = await postgres.get_proposal(proposal_id)
+    return p.model_dump(mode="json")
+
+
+@app.post("/proposals/{proposal_id}/reject")
+async def proposals_reject(proposal_id: str) -> dict:
+    postgres = app.state.memory._postgres
+    if await postgres.get_proposal(proposal_id) is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    await postgres.update_proposal_status(proposal_id, "rejected")
+    p = await postgres.get_proposal(proposal_id)
+    return p.model_dump(mode="json")
+
+
+@app.get("/git/status")
+async def git_status_endpoint() -> dict:
+    from neuros.skills.code.git_ops import GitStatusSkill
+
+    result = await GitStatusSkill().run()
+    if not result.success:
+        raise HTTPException(status_code=500, detail=result.error)
+    return result.data
+
+
 @app.post("/action", response_model=NeurOSResponse)
 async def action(input: ActionInput) -> NeurOSResponse:
     """Invoke a specific skill directly."""

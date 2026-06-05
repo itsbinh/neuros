@@ -8,7 +8,8 @@ import re
 import time
 
 from neuros.skills.base import BaseSkill, SkillResult, skill
-from neuros.skills.code._safety import project_root, resolve_safe
+from neuros.skills.code import _safety
+from neuros.skills.code._safety import resolve_safe
 
 logger = logging.getLogger("neuros.skills.code.tester")
 
@@ -47,7 +48,7 @@ class RunTestsSkill(BaseSkill):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                cwd=str(project_root()),
+                cwd=str(_safety.project_root()),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )

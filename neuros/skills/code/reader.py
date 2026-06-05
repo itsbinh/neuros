@@ -13,7 +13,8 @@ from neuros.llm.client import chat
 from neuros.llm.selector import select_model
 from neuros.models import TaskType
 from neuros.skills.base import BaseSkill, SkillResult, skill
-from neuros.skills.code._safety import check_extension, project_root, resolve_safe
+from neuros.skills.code import _safety
+from neuros.skills.code._safety import check_extension, resolve_safe
 
 logger = logging.getLogger("neuros.skills.code.reader")
 
@@ -77,7 +78,7 @@ class ListFilesSkill(BaseSkill):
             return SkillResult.fail(f"Not a directory: {path}")
 
         glob = target.rglob(pattern) if recursive else target.glob(pattern)
-        root = project_root()
+        root = _safety.project_root()
         files: list[dict] = []
         for p in glob:
             if not p.is_file():
@@ -116,7 +117,7 @@ class SearchCodeSkill(BaseSkill):
         if not query:
             return SkillResult.fail("query is required")
 
-        root = project_root()
+        root = _safety.project_root()
         rg = shutil.which("rg")
 
         if rg:
