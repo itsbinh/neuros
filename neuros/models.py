@@ -103,6 +103,23 @@ class TimelineEvent(BaseModel):
     still_valid: bool = True
 
 
+class ProposedChange(BaseModel):
+    """A proposed code change awaiting approval/apply."""
+
+    id: str
+    path: str
+    summary: str
+    reason: str
+    risk: str  # "low" | "medium" | "high"
+    original: str
+    replacement: str
+    tests_affected: list[str] = Field(default_factory=list)
+    proposed_at: datetime = Field(default_factory=datetime.utcnow)
+    status: str = "pending"  # "pending" | "approved" | "rejected" | "applied" | "failed"
+    applied_at: datetime | None = None
+    test_result: str | None = None
+
+
 class NeurOSState(TypedDict, total=False):
     """LangGraph state flowing through the agent pipeline."""
 

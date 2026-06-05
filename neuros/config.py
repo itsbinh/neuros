@@ -1,6 +1,10 @@
 """Application configuration via environment variables."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -32,6 +36,10 @@ class Settings(BaseSettings):
     # SSH users per host
     ssh_user_lts1: str = "neuros"  # from env SSH_USER_LTS1
     ssh_user_lts2: str = "neuros"  # from env SSH_USER_LTS2
+
+    # Dogfood
+    project_root: str = str(_PROJECT_ROOT)
+    agent_port: int = 8080
 
     # Neo4j
     neo4j_uri: str = "bolt://lts2:7687"
