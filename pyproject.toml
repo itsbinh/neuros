@@ -1,0 +1,38 @@
+[project]
+name = "neuros"
+version = "0.1.0"
+description = "Personal AI operating system. Built for one. Runs local."
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "langgraph",
+    "langchain-core",
+    "openai",
+    "qdrant-client",
+    "redis[hiredis]",
+    "asyncpg",
+    "sqlalchemy[asyncio]",
+    "paramiko",
+    "pydantic-settings",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
