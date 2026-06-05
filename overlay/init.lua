@@ -1,349 +1,546 @@
--- NeurOS Hammerspoon Overlay — Spotlight-style command bar
--- CMD+SHIFT+SPACE → frosted webview → POST /query → render response
+-- NeurOS Hammerspoon Overlay — single webview panel
+-- CMD+SHIFT+SPACE → unified input/response panel
+
+local OVERLAY_HTML = [[
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont,
+                 "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    width: 100%; height: 100%;
+  }
+  #panel {
+    background: #1c1c1e;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow:
+      0 24px 64px rgba(0,0,0,0.6),
+      0 4px 16px rgba(0,0,0,0.4),
+      inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  #query {
+    width: 100%;
+    min-height: 80px;
+    background: transparent;
+    border: none;
+    outline: none;
+    resize: none;
+    color: #f2f2f7;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.55;
+    padding: 16px 16px 10px;
+    caret-color: #a78bfa;
+    font-family: inherit;
+  }
+  #query::placeholder { color: rgba(235,235,245,0.28); }
+  #query:disabled { opacity: 0.4; }
+  #toolbar {
+    display: flex;
+    align-items: center;
+    height: 46px;
+    padding: 0 12px 0 14px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .ibtn {
+    display: flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px;
+    border-radius: 7px; border: none;
+    background: transparent;
+    color: rgba(255,255,255,0.32);
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+    flex-shrink: 0;
+  }
+  .ibtn:hover {
+    color: rgba(255,255,255,0.75);
+    background: rgba(255,255,255,0.07);
+  }
+  .sep {
+    width: 1px; height: 15px;
+    background: rgba(255,255,255,0.1);
+    margin: 0 5px; flex-shrink: 0;
+  }
+  #toolbar-right {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #spinner {
+    display: none;
+    color: rgba(255,255,255,0.3);
+    font-size: 13px;
+    width: 20px; text-align: center;
+  }
+  #btn-mic {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: #fff;
+    color: #1a1a1a;
+    border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.1s, background 0.12s;
+    flex-shrink: 0;
+  }
+  #btn-mic:hover { background: #ececec; transform: scale(1.05); }
+  #btn-mic:active { transform: scale(0.95); }
+  #resp-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.07);
+    display: none;
+  }
+  #resp-wrap {
+    display: none;
+    padding: 14px 16px 4px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  #resp-wrap::-webkit-scrollbar { width: 3px; }
+  #resp-wrap::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.12);
+    border-radius: 2px;
+  }
+  #resp-text {
+    color: #e5e5ea;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #resp-text.err { color: #ff453a; }
+  #meta-row {
+    display: none;
+    padding: 8px 16px 14px;
+    gap: 5px; flex-wrap: wrap; align-items: center;
+  }
+  .sbadge {
+    background: rgba(167,139,250,0.12);
+    color: rgba(167,139,250,0.85);
+    font-size: 11px; font-weight: 500;
+    padding: 2px 8px; border-radius: 10px;
+    border: 1px solid rgba(167,139,250,0.2);
+  }
+  .mbadge { color: rgba(235,235,245,0.2); font-size: 11px; }
+  .lbadge { color: rgba(235,235,245,0.18); font-size: 11px; margin-left: auto; }
+</style>
+</head>
+<body>
+<div id="panel">
+
+  <textarea id="query"
+    placeholder="Type your message here..."
+    autocomplete="off" autocorrect="off"
+    autocapitalize="off" spellcheck="false"
+    rows="3"></textarea>
+
+  <div id="toolbar">
+    <button class="ibtn" id="btn-attach" title="Attach">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19
+                 a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+      </svg>
+    </button>
+    <button class="ibtn" id="btn-web" title="Web search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0
+                 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+      </svg>
+    </button>
+    <div class="sep"></div>
+    <button class="ibtn" id="btn-gear" title="Settings">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010
+                 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33
+                 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65
+                 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0
+                 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65
+                 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9
+                 a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83
+                 l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3
+                 a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0
+                 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65
+                 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0
+                 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+    </button>
+    <div class="sep"></div>
+    <button class="ibtn" id="btn-code" title="Git status">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <polyline points="16 18 22 12 16 6"/>
+        <polyline points="8 6 2 12 8 18"/>
+      </svg>
+    </button>
+
+    <div id="toolbar-right">
+      <span id="spinner">◐</span>
+      <button id="btn-mic" title="Voice (Phase 8)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+          <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="resp-divider"></div>
+  <div id="resp-wrap"><div id="resp-text"></div></div>
+  <div id="meta-row"></div>
+
+</div>
+<script>
+  const q      = document.getElementById('query');
+  const spin   = document.getElementById('spinner');
+  const rdiv   = document.getElementById('resp-divider');
+  const rwrap  = document.getElementById('resp-wrap');
+  const rtext  = document.getElementById('resp-text');
+  const meta   = document.getElementById('meta-row');
+
+  const SF = ['◐','◓','◑','◒'];
+  let si = 0, st = null;
+
+  function startSpin() {
+    spin.style.display = 'inline';
+    st = setInterval(() => { spin.textContent = SF[si++ % 4]; }, 120);
+  }
+  function stopSpin() {
+    clearInterval(st); st = null;
+    spin.style.display = 'none';
+  }
+  function hideResp() {
+    rdiv.style.display = 'none';
+    rwrap.style.display = 'none';
+    rtext.textContent = '';
+    meta.style.display = 'none';
+    meta.innerHTML = '';
+    window.webkit.messageHandlers.resize.postMessage(130);
+  }
+
+  function setLoading(txt) {
+    q.disabled = true;
+    q.value = '';
+    q.placeholder = txt;
+    startSpin();
+    hideResp();
+  }
+
+  function receiveResponse(text, skillUsed, latencyMs, modelUsed, isError) {
+    stopSpin();
+    q.disabled = false;
+    q.placeholder = 'Type your message here...';
+    q.value = '';
+
+    rdiv.style.display = 'block';
+    rwrap.style.display = 'block';
+    rtext.textContent = text;
+    rtext.className = isError ? 'err' : '';
+
+    meta.innerHTML = '';
+    let hasMeta = false;
+    if (skillUsed) {
+      skillUsed.split(',').forEach(s => {
+        s = s.trim(); if (!s) return;
+        const b = document.createElement('span');
+        b.className = 'sbadge';
+        b.textContent = '⚡ ' + s;
+        meta.appendChild(b);
+        hasMeta = true;
+      });
+    }
+    if (modelUsed) {
+      const m = document.createElement('span');
+      m.className = 'mbadge';
+      m.textContent = modelUsed.split('/').pop();
+      meta.appendChild(m);
+      hasMeta = true;
+    }
+    if (latencyMs) {
+      const l = document.createElement('span');
+      l.className = 'lbadge';
+      l.textContent = latencyMs + ' ms';
+      meta.appendChild(l);
+      hasMeta = true;
+    }
+    if (hasMeta) meta.style.display = 'flex';
+
+    window.webkit.messageHandlers.resize.postMessage(
+      document.getElementById('panel').scrollHeight
+    );
+    setTimeout(() => q.focus(), 40);
+  }
+
+  function setInputValue(val) { q.value = val; q.focus(); }
+  function focusInput() { q.focus(); }
+
+  q.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const v = q.value.trim();
+      if (!v) return;
+      setLoading(v);
+      window.webkit.messageHandlers.query.postMessage(v);
+    }
+    if (e.key === 'Escape')
+      window.webkit.messageHandlers.dismiss.postMessage('');
+    if (e.key === 'ArrowUp' && q.value === '') {
+      e.preventDefault();
+      window.webkit.messageHandlers.historyUp.postMessage('');
+    }
+    if (e.key === 'ArrowDown' && q.value === '') {
+      e.preventDefault();
+      window.webkit.messageHandlers.historyDown.postMessage('');
+    }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.metaKey && e.key === 'k') {
+      hideResp(); q.value = '';
+      q.placeholder = 'Type your message here...';
+      q.focus();
+    }
+  });
+
+  document.getElementById('btn-gear').onclick = () => {
+    setLoading('open settings');
+    window.webkit.messageHandlers.query.postMessage('open settings');
+  };
+  document.getElementById('btn-code').onclick = () => {
+    setLoading('git status');
+    window.webkit.messageHandlers.query.postMessage('git status');
+  };
+  document.getElementById('btn-attach').onclick = () => q.focus();
+  document.getElementById('btn-web').onclick    = () => q.focus();
+  document.getElementById('btn-mic').onclick    = () => q.focus();
+
+  setTimeout(() => q.focus(), 40);
+</script>
+</body>
+</html>
+]]
+
+-- ── Constants ────────────────────────────────────────────────────
 
 local AGENT_URL = "http://localhost:8080"
 local SESSION_ID = "overlay-" .. tostring(os.time())
 
-local WIDTH = 680
-local HEIGHT_COLLAPSED = 64
-local HEIGHT_EXPANDED = 320
-local TOP_OFFSET = 46
+-- ── Panel dimensions ─────────────────────────────────────────────
 
-local overlay = nil
-local clickWatcher = nil
-local menubar = nil
+local PANEL_W   = 680
+local PANEL_TOP = 52
+local PANEL_H_MIN = 130
+local PANEL_H_MAX = 520
 
--- ── Geometry ────────────────────────────────────────────────────
-local function getOverlayFrame(height)
-    local screen = hs.screen.mainScreen():frame()
-    local x = screen.x + math.floor((screen.w - WIDTH) / 2)
-    local y = screen.y + TOP_OFFSET
-    return { x = x, y = y, w = WIDTH, h = height or HEIGHT_COLLAPSED }
-end
+-- ── State ────────────────────────────────────────────────────────
 
--- ── HTML payload ────────────────────────────────────────────────
-local function buildHTML()
-    return [[
-<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body {
-    background: transparent;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-    color: #f2f2f7;
-    height: 100vh;
-    overflow: hidden;
-  }
-  #container {
-    background: rgba(28, 28, 30, 0.97);
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 16px 60px rgba(0,0,0,0.6);
-    width: 100%;
-    min-height: 64px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  #input-row {
-    display: flex;
-    align-items: center;
-    height: 64px;
-    padding: 0 20px;
-    gap: 12px;
-  }
-  #icon {
-    font-size: 18px;
-    color: #8e8e93;
-    width: 22px;
-    text-align: center;
-    font-family: "Menlo", monospace;
-  }
-  #query {
-    flex: 1;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: #f2f2f7;
-    font-size: 18px;
-    font-weight: 400;
-    caret-color: #0a84ff;
-  }
-  #query::placeholder { color: #636366; }
-  #spinner {
-    font-size: 16px;
-    color: #0a84ff;
-    width: 20px;
-    text-align: center;
-    font-family: "Menlo", monospace;
-    display: none;
-  }
-  #response-area {
-    border-top: 1px solid rgba(255,255,255,0.06);
-    padding: 14px 20px 12px 20px;
-    font-size: 14px;
-    line-height: 1.5;
-    color: #e5e5ea;
-    max-height: 220px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    display: none;
-  }
-  #meta-row {
-    display: none;
-    padding: 8px 20px 12px 20px;
-    font-size: 11px;
-    color: #8e8e93;
-    align-items: center;
-    gap: 8px;
-    border-top: 1px solid rgba(255,255,255,0.04);
-  }
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: rgba(10, 132, 255, 0.18);
-    color: #64b5ff;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.3px;
-  }
-  .badge.error { background: rgba(255, 69, 58, 0.18); color: #ff6961; }
-  .latency { margin-left: auto; font-variant-numeric: tabular-nums; }
-  #response-area::-webkit-scrollbar { width: 6px; }
-  #response-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-</style></head>
-<body>
-  <div id="container">
-    <div id="input-row">
-      <div id="icon">&gt;_</div>
-      <input id="query" type="text" autofocus autocomplete="off" spellcheck="false" placeholder="Ask NeurOS..." />
-      <div id="spinner">&#9680;</div>
-    </div>
-    <div id="response-area"></div>
-    <div id="meta-row">
-      <span id="skill-badge" class="badge"></span>
-      <span class="latency" id="latency"></span>
-    </div>
-  </div>
+local wv         = nil
+local isVisible  = false
+local isLoading  = false
+local history    = {}
+local historyIdx = 0
 
-<script>
-  const AGENT = "__AGENT_URL__";
-  const SESSION_ID = "__SESSION_ID__";
+-- ── Helpers ──────────────────────────────────────────────────────
 
-  const input = document.getElementById("query");
-  const spinner = document.getElementById("spinner");
-  const responseArea = document.getElementById("response-area");
-  const metaRow = document.getElementById("meta-row");
-  const skillBadge = document.getElementById("skill-badge");
-  const latencyEl = document.getElementById("latency");
-
-  const history = [];
-  let historyIdx = -1;
-  let spinnerTimer = null;
-  const FRAMES = ["◐","◓","◑","◒"];
-  let frameIdx = 0;
-
-  function notify(name, payload) {
-    try {
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[name]) {
-        window.webkit.messageHandlers[name].postMessage(payload || {});
-      }
-    } catch (e) {}
-  }
-
-  function startSpinner() {
-    spinner.style.display = "block";
-    spinnerTimer = setInterval(() => {
-      spinner.textContent = FRAMES[frameIdx];
-      frameIdx = (frameIdx + 1) % FRAMES.length;
-    }, 150);
-  }
-  function stopSpinner() {
-    if (spinnerTimer) clearInterval(spinnerTimer);
-    spinnerTimer = null;
-    spinner.style.display = "none";
-  }
-
-  function expand() {
-    notify("resize", { h: 320 });
-  }
-  function collapse() {
-    responseArea.style.display = "none";
-    metaRow.style.display = "none";
-    notify("resize", { h: 64 });
-  }
-
-  async function send(text) {
-    startSpinner();
-    input.disabled = true;
-    const t0 = performance.now();
-    try {
-      const res = await fetch(AGENT + "/query", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ text: text, session_id: SESSION_ID })
-      });
-      const data = await res.json();
-      const dt = Math.round(performance.now() - t0);
-      renderResponse(data, dt);
-    } catch (err) {
-      renderError(err.message);
-    } finally {
-      stopSpinner();
-      input.disabled = false;
-      input.focus();
+local function panelFrame(h)
+    local sf = hs.screen.mainScreen():frame()
+    return {
+        x = sf.x + math.floor((sf.w - PANEL_W) / 2),
+        y = sf.y + PANEL_TOP,
+        w = PANEL_W,
+        h = h or PANEL_H_MIN
     }
-  }
-
-  function renderResponse(data, dt) {
-    expand();
-    responseArea.style.display = "block";
-    metaRow.style.display = "flex";
-    if (data.error) {
-      responseArea.textContent = data.error;
-      skillBadge.className = "badge error";
-      skillBadge.textContent = "error";
-    } else {
-      responseArea.textContent = data.response || "(no response)";
-      skillBadge.className = "badge";
-      skillBadge.textContent = data.skill_used || "agent";
-    }
-    const lat = data.latency_ms != null ? data.latency_ms : dt;
-    latencyEl.textContent = lat + " ms";
-  }
-
-  function renderError(msg) {
-    expand();
-    responseArea.style.display = "block";
-    metaRow.style.display = "flex";
-    responseArea.textContent = "Error: " + msg;
-    skillBadge.className = "badge error";
-    skillBadge.textContent = "network";
-    latencyEl.textContent = "";
-  }
-
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const t = input.value.trim();
-      if (!t) return;
-      history.unshift(t);
-      if (history.length > 20) history.pop();
-      historyIdx = -1;
-      input.value = "";
-      send(t);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      notify("dismiss", {});
-    } else if (e.key === "ArrowUp") {
-      if (history.length === 0) return;
-      e.preventDefault();
-      historyIdx = Math.min(historyIdx + 1, history.length - 1);
-      input.value = history[historyIdx];
-    } else if (e.key === "ArrowDown") {
-      if (history.length === 0) return;
-      e.preventDefault();
-      historyIdx = Math.max(historyIdx - 1, -1);
-      input.value = historyIdx === -1 ? "" : history[historyIdx];
-    } else if (e.key === "k" && e.metaKey) {
-      e.preventDefault();
-      input.value = "";
-      collapse();
-    }
-  });
-
-  setTimeout(() => input.focus(), 30);
-</script>
-</body></html>
-]]
 end
 
-local function renderHTML()
-    local html = buildHTML()
-    html = html:gsub("__AGENT_URL__", AGENT_URL)
-    html = html:gsub("__SESSION_ID__", SESSION_ID)
-    return html
+local function escapeHTML(text)
+    text = tostring(text or "")
+    text = text:gsub("&", "&amp;")
+    text = text:gsub("<", "&lt;")
+    text = text:gsub(">", "&gt;")
+    return text
 end
 
--- ── Overlay lifecycle ───────────────────────────────────────────
-local function dismissOverlay()
-    if clickWatcher then
-        clickWatcher:stop()
-        clickWatcher = nil
-    end
-    if overlay then
-        overlay:delete()
-        overlay = nil
-    end
+local function responseText(data)
+    if type(data) ~= "table" then return "(invalid response)" end
+    return data.text or data.response or data.error or "(no response)"
 end
 
-local function resizeOverlay(h)
-    if not overlay then return end
-    local f = getOverlayFrame(h)
-    overlay:frame(f)
-end
+-- ── Submit query (HTTP unchanged, UI calls replaced) ─────────────
 
-local function handleMessage(message)
-    if type(message) ~= "table" then return end
-    local body = message.body
-    local name = message.name
-    if name == "dismiss" then
-        dismissOverlay()
-    elseif name == "resize" then
-        local h = HEIGHT_COLLAPSED
-        if type(body) == "table" and body.h then h = body.h end
-        resizeOverlay(h)
-    end
-end
+local function submitQuery(text)
+    if isLoading then return end
+    text = (text or ""):match("^%s*(.-)%s*$")
+    if text == "" then return end
 
-local function openOverlay()
-    if overlay then
-        dismissOverlay()
-        return
-    end
+    isLoading = true
 
-    local frame = getOverlayFrame(HEIGHT_COLLAPSED)
-    local prefs = { developerExtrasEnabled = false }
-    local ucc = hs.webview.usercontent.new("neuros")
-    ucc:setCallback(handleMessage)
+    table.insert(history, text)
+    historyIdx = #history
 
-    overlay = hs.webview.new(frame, prefs, ucc)
-        :allowTextEntry(true)
-        :transparent(true)
-        :windowStyle({ "borderless", "closable", "nonactivating" })
-        :level(hs.drawing.windowLevels.modalPanel)
-        :shadow(true)
-        :closeOnEscape(true)
-        :html(renderHTML())
-        :bringToFront(true)
-        :show()
+    wv:evaluateJavaScript("setLoading("..hs.json.encode(text)..")")
 
-    hs.timer.doAfter(0.05, function()
-        if overlay then overlay:hswindow():focus() end
-    end)
+    local started = hs.timer.secondsSinceEpoch()
+    local payload = hs.json.encode({ text = text, session_id = SESSION_ID })
+    hs.http.asyncPost(
+        AGENT_URL .. "/query",
+        payload,
+        { ["Content-Type"] = "application/json" },
+        function(status, body)
+            isLoading = false
 
-    -- click-outside dismiss
-    clickWatcher = hs.eventtap.new(
-        { hs.eventtap.event.types.leftMouseDown, hs.eventtap.event.types.rightMouseDown },
-        function(event)
-            if not overlay then return false end
-            local pos = event:location()
-            local f = overlay:frame()
-            local inside = pos.x >= f.x and pos.x <= f.x + f.w
-                       and pos.y >= f.y and pos.y <= f.y + f.h
-            if not inside then
-                hs.timer.doAfter(0, dismissOverlay)
+            local elapsedMs = math.floor((hs.timer.secondsSinceEpoch() - started) * 1000)
+            if status ~= 200 then
+                wv:evaluateJavaScript(
+                    "receiveResponse("..hs.json.encode(body or "error")..",'',0,'',true)"
+                )
+                return
             end
-            return false
+
+            local ok, data = pcall(hs.json.decode, body or "")
+            if not ok then
+                wv:evaluateJavaScript(
+                    "receiveResponse("..hs.json.encode(body or "error")..",'',0,'',true)"
+                )
+                return
+            end
+
+            local model = data.model_used or data.skill_used or "agent"
+            local latency = data.latency_ms or elapsedMs
+
+            local js = string.format(
+                "receiveResponse(%s,%s,%d,%s,%s)",
+                hs.json.encode(responseText(data)),
+                hs.json.encode(data.skill_used or ""),
+                latency,
+                hs.json.encode(model),
+                "false"
+            )
+            wv:evaluateJavaScript(js)
         end
-    ):start()
+    )
 end
 
--- ── Hotkeys ─────────────────────────────────────────────────────
+-- ── Webview creation (once) ──────────────────────────────────────
+
+local function buildWebview()
+    local obj = hs.webview.new(panelFrame())
+    obj:windowStyle({})
+    obj:level(hs.drawing.windowLevels.modalPanel)
+    obj:allowTextEntry(true)
+    obj:transparent(true)
+    obj:opaque(false)
+    obj:shadow(false)
+    obj:html(OVERLAY_HTML)
+
+    -- resize message from JS
+    obj:userContentController():addScriptMessageHandler(
+        hs.webview.usercontent.new("resize"),
+        function(msg)
+            local h = tonumber(msg.body) or PANEL_H_MIN
+            h = math.max(PANEL_H_MIN, math.min(h, PANEL_H_MAX))
+            obj:setFrame(panelFrame(h))
+        end
+    )
+
+    -- query submitted from JS
+    obj:userContentController():addScriptMessageHandler(
+        hs.webview.usercontent.new("query"),
+        function(msg)
+            submitQuery(msg.body)
+        end
+    )
+
+    -- dismiss from JS (ESC key)
+    obj:userContentController():addScriptMessageHandler(
+        hs.webview.usercontent.new("dismiss"),
+        function(_) hideOverlay() end
+    )
+
+    -- history navigation
+    obj:userContentController():addScriptMessageHandler(
+        hs.webview.usercontent.new("historyUp"),
+        function(msg)
+            historyIdx = math.min(historyIdx + 1, #history)
+            if history[historyIdx] then
+                obj:evaluateJavaScript(
+                    "setInputValue("..hs.json.encode(history[historyIdx])..")"
+                )
+            end
+        end
+    )
+
+    obj:userContentController():addScriptMessageHandler(
+        hs.webview.usercontent.new("historyDown"),
+        function(msg)
+            historyIdx = math.max(historyIdx - 1, 0)
+            local val = history[historyIdx] or ""
+            obj:evaluateJavaScript("setInputValue("..hs.json.encode(val)..")")
+        end
+    )
+
+    return obj
+end
+
+-- ── Show / hide ──────────────────────────────────────────────────
+
+function showOverlay()
+    if not wv then wv = buildWebview() end
+    wv:setFrame(panelFrame(PANEL_H_MIN))
+    wv:show()
+    wv:hswindow():focus()
+    hs.timer.doAfter(0.05, function()
+        wv:evaluateJavaScript("focusInput()")
+    end)
+    isVisible = true
+end
+
+function hideOverlay()
+    if wv then wv:hide() end
+    isVisible = false
+end
+
+function openOverlay()
+    if isVisible then hideOverlay() else showOverlay() end
+end
+
+-- ── Click outside to dismiss ─────────────────────────────────────
+
+local clickWatcher = hs.eventtap.new(
+    { hs.eventtap.event.types.leftMouseDown },
+    function(e)
+        if not isVisible or not wv then return false end
+        local pos = e:location()
+        local f   = wv:frame()
+        if pos.x < f.x or pos.x > f.x + f.w or
+           pos.y < f.y or pos.y > f.y + f.h then
+            hideOverlay()
+        end
+        return false
+    end
+)
+clickWatcher:start()
+
+-- ── Hotkeys ──────────────────────────────────────────────────────
+
 hs.hotkey.bind({ "cmd", "shift" }, "space", openOverlay)
 
--- ── Menubar with health polling ─────────────────────────────────
+-- ── Menubar with health polling ──────────────────────────────────
+
+local menubar = nil
+
 local function pollHealth()
     hs.http.asyncGet(AGENT_URL .. "/health", nil, function(status, body)
         if not menubar then return end
@@ -375,4 +572,4 @@ if menubar then
     hs.timer.doEvery(30, pollHealth)
 end
 
-hs.alert.show("NeurOS overlay ready · ⌘⇧Space", 1.5)
+print("[NeurOS] ready · ⌘⇧Space")
