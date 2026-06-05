@@ -48,8 +48,17 @@ def _is_entity_query(text: str) -> bool:
 
 
 def _classify_dogfood(text: str) -> str | None:
-    """Return 'improve' | 'apply' | 'commit' | 'reject' | None."""
+    """Return 'read' | 'understand' | 'improve' | 'apply' | 'commit' | 'reject' | None."""
     lower = text.lower().strip()
+
+    if lower.startswith("read ") or lower.startswith("read the file "):
+        return "read"
+    if lower.startswith("what does ") and _extract_path(text):
+        return "understand"
+    if lower.startswith("explain ") and _extract_path(text):
+        return "understand"
+    if lower.startswith("understand ") and _extract_path(text):
+        return "understand"
 
     if lower.startswith("apply ") or lower in {"yes apply it", "go ahead", "yes", "apply"}:
         return "apply"
@@ -72,6 +81,22 @@ def _extract_path(text: str) -> str | None:
 
     m = re.search(r"([a-zA-Z0-9_./-]+\.(?:py|lua|md|toml|yaml|yml|sh|txt))", text)
     return m.group(1) if m else None
+
+
+def _resolve_obvious_path(path: str) -> str:
+    """Resolve bare filenames that clearly refer to files under neuros/."""
+    from pathlib import Path
+
+    root = Path.cwd()
+    candidate = root / path
+    if candidate.exists():
+        return path
+
+    neuros_candidate = root / "neuros" / path
+    if "/" not in path and neuros_candidate.exists():
+        return str(Path("neuros") / path)
+
+    return path
 
 
 def _extract_entity_name(text: str) -> str:
@@ -192,11 +217,15 @@ def _make_think(memory: Any, registry: Any = None):
         tool_calls = []
         if isinstance(response, dict):
             tool_calls = response.get("tool_calls", []) or []
+            response_text = response.get("content", "")
         elif hasattr(response, "tool_calls"):
             tool_calls = list(response.tool_calls) if response.tool_calls else []
+            response_text = getattr(response, "content", "") or ""
+        else:
+            response_text = response
 
         return {
-            "response": response,
+            "response": response_text,
             "model_used": model_config.name,
             "latency_ms": latency_ms,
             "tool_calls": tool_calls,
@@ -235,9 +264,9 @@ def _make_act(registry: Any, memory: Any):
             result = await registry.execute(skill_name, **kwargs)
 
             if result.success:
-                skill_results.append(result.output)
+                skill_results.append(result.data)
                 try:
-                    out_str = json.dumps(result.output) if hasattr(result, "output") else ""
+                    out_str = json.dumps(result.data)
                     store_msg = f"Executed {skill_name}: {out_str}"
                     await memory.store(
                         store_msg,
@@ -384,6 +413,56 @@ def _make_dogfood(memory: Any):
                     f"Reply 'apply {p['id']}' to apply, or 'reject {p['id']}' to discard."
                 )
                 return {"response": text}
+
+            if intent == "dogfood_read":
+                from neuros.skills.code.reader import ReadFileSkill, UnderstandFileSkill
+
+                path = _extract_path(input_text)
+                if not path:
+                    return {"response": "Could not identify a file to read."}
+                path = _resolve_obvious_path(path)
+
+                read_result = await ReadFileSkill().run(path=path)
+                if not read_result.success:
+                    return {"response": f"Read failed: {read_result.error}"}
+
+                understand_result = await UnderstandFileSkill().run(path=path)
+                summary = (
+                    understand_result.data.get("summary", "")
+                    if understand_result.success and understand_result.data
+                    else f"Summary unavailable: {understand_result.error}"
+                )
+                data = read_result.data
+                return {
+                    "response": (
+                        f"File: {data['path']} ({data['line_count']} lines)\n\n"
+                        f"Summary:\n{summary}\n\n"
+                        f"Content:\n{data['content']}"
+                    )
+                }
+
+            if intent == "dogfood_understand":
+                from neuros.skills.code.reader import UnderstandFileSkill
+
+                path = _extract_path(input_text)
+                if not path:
+                    return {"response": "Could not identify a file to explain."}
+                path = _resolve_obvious_path(path)
+
+                focus = input_text
+                result = await UnderstandFileSkill().run(path=path, focus=focus)
+                if not result.success:
+                    return {"response": f"Understand failed: {result.error}"}
+
+                data = result.data
+                components = ", ".join(data.get("key_components", [])[:12])
+                return {
+                    "response": (
+                        f"File: {data['path']}\n\n"
+                        f"{data['summary']}\n\n"
+                        f"Key components: {components or '(none found)'}"
+                    )
+                }
 
             if intent == "dogfood_apply":
                 m = _UUID_RE.search(input_text)

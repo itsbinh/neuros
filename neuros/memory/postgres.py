@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import uuid
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, desc, func, select
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -27,7 +27,7 @@ class Base(DeclarativeBase):
 class Interaction(Base):
     __tablename__ = "interactions"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(String(128), nullable=True, index=True)
     input = Column(Text, nullable=False)
     output = Column(Text, nullable=False)

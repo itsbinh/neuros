@@ -21,6 +21,16 @@ logger = logging.getLogger("neuros.skills.code.reader")
 
 @skill("read_file", "Read a file from the NeurOS codebase")
 class ReadFileSkill(BaseSkill):
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Project-relative file path"},
+            "start_line": {"type": "integer", "description": "First line to read"},
+            "end_line": {"type": "integer", "description": "Last line to read"},
+        },
+        "required": ["path"],
+    }
+
     async def run(self, **params) -> SkillResult:
         path = params.get("path")
         start_line = params.get("start_line")
@@ -64,6 +74,15 @@ class ReadFileSkill(BaseSkill):
 
 @skill("list_files", "List files in a NeurOS project directory")
 class ListFilesSkill(BaseSkill):
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Project-relative directory"},
+            "pattern": {"type": "string", "description": "Glob pattern"},
+            "recursive": {"type": "boolean", "description": "Whether to recurse"},
+        },
+    }
+
     async def run(self, **params) -> SkillResult:
         path = params.get("path", ".")
         pattern = params.get("pattern", "*")
@@ -109,6 +128,16 @@ class ListFilesSkill(BaseSkill):
 
 @skill("search_code", "Search NeurOS codebase for a pattern or keyword")
 class SearchCodeSkill(BaseSkill):
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Text or regex to search for"},
+            "file_pattern": {"type": "string", "description": "File glob to search"},
+            "case_sensitive": {"type": "boolean", "description": "Use case-sensitive search"},
+        },
+        "required": ["query"],
+    }
+
     async def run(self, **params) -> SkillResult:
         query = params.get("query")
         file_pattern = params.get("file_pattern", "*.py")
@@ -167,6 +196,15 @@ class SearchCodeSkill(BaseSkill):
 
 @skill("understand_file", "Analyze a NeurOS source file and explain what it does")
 class UnderstandFileSkill(BaseSkill):
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Project-relative file path"},
+            "focus": {"type": "string", "description": "Optional function or topic to focus on"},
+        },
+        "required": ["path"],
+    }
+
     async def run(self, **params) -> SkillResult:
         path = params.get("path")
         focus = params.get("focus")

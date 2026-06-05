@@ -99,3 +99,27 @@ class SkillRegistry:
 
     async def dispatch(self, skill_name: str, **params: Any) -> SkillResult:
         return await dispatch(skill_name, **params)
+
+    async def execute(self, skill_name: str, **params: Any) -> SkillResult:
+        """Execute a registered skill.
+
+        Graph nodes use this name when handling model tool calls.
+        """
+        return await self.dispatch(skill_name, **params)
+
+    def to_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return OpenAI-compatible tool schemas for registered skills."""
+        schemas: list[dict[str, Any]] = []
+        for skill in self.all_skills():
+            parameters = skill.parameters or {"type": "object", "properties": {}}
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": skill.name,
+                        "description": skill.description,
+                        "parameters": parameters,
+                    },
+                }
+            )
+        return schemas

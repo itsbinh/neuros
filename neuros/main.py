@@ -88,7 +88,14 @@ app.add_middleware(
 async def health() -> dict:
     """Health check including memory store status."""
     memory_health = await app.state.memory.health()
-    return {"status": "ok", "memory": memory_health, "version": "0.1.0"}
+    registry = getattr(app.state, "registry", None)
+    skills_loaded = len(registry.all_skills()) if registry is not None else 0
+    return {
+        "status": "ok",
+        "memory": memory_health,
+        "skills_loaded": skills_loaded,
+        "version": "0.1.0",
+    }
 
 
 @app.get("/skills")
