@@ -1,10 +1,13 @@
-.PHONY: dev setup test-stack test-graphiti neo4j-shell graph-stats test lint fmt overlay-install
+.PHONY: dev setup setup-dogfood test-stack test-graphiti neo4j-shell graph-stats test lint fmt overlay-install
 
 dev:
-	uvicorn neuros.main:app --reload --host 127.0.0.1 --port 8002
+	uvicorn neuros.main:app --reload --host 127.0.0.1 --port 8080
 
 setup:
 	python scripts/setup_db.py
+
+setup-dogfood:
+	python scripts/setup_dogfood.py
 
 test-stack:
 	python scripts/test_inference.py

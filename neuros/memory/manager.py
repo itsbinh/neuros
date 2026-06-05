@@ -175,6 +175,14 @@ class MemoryManager:
             latency_ms=latency_ms,
         )
 
+    async def _validate_qdrant(self) -> None:
+        """Validate Qdrant connection on startup to fail fast."""
+        try:
+            await self._qdrant.collection_info()
+        except Exception as e:
+            logger.error("Qdrant connection failed during initialization: %s", e)
+            raise RuntimeError("Qdrant store is not available") from e
+
     async def health(self) -> dict:
         result: dict[str, Any] = {}
 

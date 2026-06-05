@@ -27,6 +27,15 @@ class SkillResult(BaseModel):
     def fail(cls, error: str, skill_name: str | None = None) -> SkillResult:
         return cls(success=False, error=error, skill_name=skill_name)
 
+    @property
+    def output(self) -> Any:
+        """Backward-compatible alias for older callers/tests."""
+        return self.data
+
+    @output.setter
+    def output(self, value: Any) -> None:
+        self.data = value
+
 
 class BaseSkill(ABC):
     """Base class for all NeurOS skills. Skills are stateless."""

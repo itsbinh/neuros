@@ -50,6 +50,14 @@ class SkillResult(BaseModel):
     data: Any | None = None
     error: str | None = None
 
+    @property
+    def output(self) -> Any | None:
+        return self.data
+
+    @output.setter
+    def output(self, value: Any | None) -> None:
+        self.data = value
+
 
 class NeurOSResponse(BaseModel):
     text: str
@@ -101,6 +109,23 @@ class TimelineEvent(BaseModel):
     fact: str
     source: str = ""
     still_valid: bool = True
+
+
+class ProposedChange(BaseModel):
+    """A proposed code change awaiting approval/apply."""
+
+    id: str
+    path: str
+    summary: str
+    reason: str
+    risk: str  # "low" | "medium" | "high"
+    original: str
+    replacement: str
+    tests_affected: list[str] = Field(default_factory=list)
+    proposed_at: datetime = Field(default_factory=datetime.utcnow)
+    status: str = "pending"  # "pending" | "approved" | "rejected" | "applied" | "failed"
+    applied_at: datetime | None = None
+    test_result: str | None = None
 
 
 class NeurOSState(TypedDict, total=False):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError
@@ -30,7 +30,8 @@ async def chat(
     stream: bool = False,
     temperature: float = 0.7,
     max_tokens: int | None = None,
-) -> str | AsyncIterator[str]:
+    tools: list[dict[str, Any]] | None = None,
+) -> str | dict[str, Any] | AsyncIterator[str]:
     """Send a chat completion request with exponential backoff retry.
 
     Args:
@@ -40,6 +41,7 @@ async def chat(
         stream: If True, returns an async iterator of chunks.
         temperature: Sampling temperature.
         max_tokens: Maximum output tokens.
+        tools: Optional OpenAI-compatible tool/function schemas.
 
     Returns:
         Completed text string, or an async iterator if streaming.
@@ -52,6 +54,8 @@ async def chat(
     }
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if tools:
+        kwargs["tools"] = tools
 
     last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
@@ -59,7 +63,17 @@ async def chat(
             if stream:
                 return _stream_response(client, kwargs)
             response = await client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content or ""
+            message = response.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None) or []
+            if tool_calls:
+                return {
+                    "content": message.content or "",
+                    "tool_calls": [
+                        tc.model_dump(mode="json") if hasattr(tc, "model_dump") else tc
+                        for tc in tool_calls
+                    ],
+                }
+            content = message.content or ""
             logger.debug("chat response (%s, attempt %d): %s", model, attempt + 1, content[:80])
             return content
         except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
