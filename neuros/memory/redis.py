@@ -14,7 +14,7 @@ logger = logging.getLogger("neuros.memory.redis")
 _DEFAULT_TTL = 3600  # 1 hour
 
 
-class RedisCache:
+class RedisStore:
     """Async Redis client for short-lived context."""
 
     def __init__(self) -> None:
@@ -54,7 +54,7 @@ class RedisCache:
             await self._client.lpush(key, text)
             await self._client.ltrim(key, 0, 99)  # keep last 100
 
-    async def get_recent(self, n: int = 10, session_id: str = "default") -> list[str]:
+    async def get_recent(self, session_id: str = "default", n: int = 10) -> list[str]:
         """Get the N most recent interactions for a session."""
         if self._client:
             key = f"recent:{session_id}"
@@ -63,5 +63,8 @@ class RedisCache:
         return []
 
 
+# Backwards-compatible alias
+RedisCache = RedisStore
+
 # Module-level singleton
-cache = RedisCache()
+cache = RedisStore()
