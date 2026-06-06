@@ -101,6 +101,25 @@ local OVERLAY_HTML = [[
     display: flex; align-items: center; gap: 6px;
     -webkit-app-region: no-drag;
   }
+  #model-select {
+    width: 138px;
+    height: 30px;
+    margin-left: 4px;
+    padding: 0 24px 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-bg);
+    color: var(--muted);
+    font: 500 11px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    outline: none;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+  }
+  #model-select:hover,
+  #model-select:focus {
+    color: var(--text);
+    background: var(--hover);
+  }
   #spinner {
     display: none;
     width: 14px; height: 14px;
@@ -262,6 +281,7 @@ local OVERLAY_HTML = [[
                  01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
       </svg>
     </button>
+    <select id="model-select" title="Model"></select>
 
     <!-- right: spinner + mic + send -->
     <div id="toolbar-right">
@@ -308,6 +328,7 @@ local OVERLAY_HTML = [[
   const btnSend = document.getElementById('btn-send');
   const btnMic  = document.getElementById('btn-mic');
   const statusDot = document.getElementById('status-dot');
+  const modelSelect = document.getElementById('model-select');
   const hint = document.getElementById('hint');
 
   const SEND_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>`;
@@ -374,9 +395,37 @@ local OVERLAY_HTML = [[
       const resp = await fetch(AGENT_URL + '/health', { cache: 'no-store' });
       statusDot.dataset.state = resp.ok ? 'online' : 'offline';
       statusDot.title = resp.ok ? 'Agent online' : 'Agent offline';
+      if (resp.ok && modelSelect.disabled) loadModels();
     } catch {
       statusDot.dataset.state = 'offline';
       statusDot.title = 'Agent offline';
+    }
+  }
+
+  function selectedModelName() {
+    return modelSelect.value || null;
+  }
+
+  async function loadModels() {
+    try {
+      const resp = await fetch(AGENT_URL + '/models', { cache: 'no-store' });
+      if (!resp.ok) throw new Error('models unavailable');
+      const models = await resp.json();
+      modelSelect.innerHTML = '';
+      const saved = localStorage.getItem('neuros.modelName') || '';
+      let selected = '';
+      models.forEach(model => {
+        const opt = document.createElement('option');
+        opt.value = model.name;
+        opt.textContent = model.name;
+        modelSelect.appendChild(opt);
+        if (model.name === saved || (!selected && model.default)) selected = model.name;
+      });
+      if (selected) modelSelect.value = selected;
+      modelSelect.disabled = models.length === 0;
+    } catch {
+      modelSelect.innerHTML = '<option value="">default</option>';
+      modelSelect.disabled = true;
     }
   }
 
@@ -440,7 +489,11 @@ local OVERLAY_HTML = [[
       const resp = await fetch(AGENT_URL + '/query/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: v, session_id: SESSION_ID }),
+        body: JSON.stringify({
+          text: v,
+          session_id: SESSION_ID,
+          model_name: selectedModelName(),
+        }),
         signal: _abort.signal,
       });
       if (!resp.ok) throw new Error('Agent returned ' + resp.status);
@@ -559,6 +612,11 @@ local OVERLAY_HTML = [[
     doSubmit();
   });
 
+  modelSelect.addEventListener('change', () => {
+    if (modelSelect.value) localStorage.setItem('neuros.modelName', modelSelect.value);
+    q.focus();
+  });
+
   let recognition = null;
   btnMic.addEventListener('click', function() {
     if (recognition) { recognition.stop(); return; }
@@ -582,6 +640,7 @@ local OVERLAY_HTML = [[
   });
 
   refreshHealth();
+  loadModels();
   setInterval(refreshHealth, 10000);
   setTimeout(() => q.focus(), 50);
 </script>

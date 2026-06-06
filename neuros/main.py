@@ -19,6 +19,7 @@ from neuros.config import settings
 from neuros.graph import _classify_dogfood, _is_entity_query, build_graph
 from neuros.llm.client import chat
 from neuros.llm.embedder import embed as embed_fn
+from neuros.llm.registry import get_models
 from neuros.llm.selector import select_model
 from neuros.memory.graphiti_store import GraphitiStore
 from neuros.memory.manager import MemoryManager
@@ -45,6 +46,20 @@ def _format_search_results(data: dict) -> str:
         source = item.get("source") or "search"
         lines.append(f"{idx}. {title}\n{url}\n{snippet}\nSource: {source}".strip())
     return "\n\n".join(lines)
+
+
+def _requested_model_name(input: QueryInput) -> str | None:
+    name = (input.model_name or "").strip()
+    return name or None
+
+
+def _validate_text_model(model_name: str | None) -> None:
+    if model_name is None:
+        return
+    try:
+        select_model(TaskType.REASONING, model_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @asynccontextmanager
@@ -134,11 +149,28 @@ async def skills_list() -> list[dict]:
     ]
 
 
+@app.get("/models")
+async def models_list() -> list[dict]:
+    """List configured model names without exposing endpoint URLs."""
+    default_model = select_model(TaskType.REASONING).name
+    return [
+        {
+            "name": m.name,
+            "capabilities": m.capabilities,
+            "default": m.name == default_model,
+        }
+        for m in get_models()
+        if "text" in m.capabilities
+    ]
+
+
 @app.post("/query", response_model=NeurOSResponse)
 async def query(input: QueryInput) -> NeurOSResponse:
     """Process a user query through the agent graph."""
     session_id = input.session_id or str(uuid.uuid4())
     text = input.text.strip()
+    model_name = _requested_model_name(input)
+    _validate_text_model(model_name)
     t0 = time.monotonic()
 
     if text.lower().startswith("search:"):
@@ -175,6 +207,7 @@ async def query(input: QueryInput) -> NeurOSResponse:
     initial_state: NeurOSState = {
         "input": input.text,
         "session_id": session_id,
+        "model_name": model_name,
         "context": [],
         "response": "",
         "tool_calls": [],
@@ -219,6 +252,8 @@ async def query_stream(input: QueryInput) -> StreamingResponse:
     """Stream a query response as SSE tokens."""
     session_id = input.session_id or str(uuid.uuid4())
     text = input.text.strip()
+    model_name = _requested_model_name(input)
+    _validate_text_model(model_name)
 
     async def event_gen():
         async def emit_text(text: str):
@@ -256,6 +291,7 @@ async def query_stream(input: QueryInput) -> StreamingResponse:
             initial_state: NeurOSState = {
                 "input": text,
                 "session_id": session_id,
+                "model_name": model_name,
                 "context": [],
                 "response": "",
                 "tool_calls": [],
@@ -294,7 +330,7 @@ async def query_stream(input: QueryInput) -> StreamingResponse:
         except Exception as e:
             logger.warning("stream recall failed: %s", e)
 
-        model_config = select_model(TaskType.REASONING)
+        model_config = select_model(TaskType.REASONING, model_name)
         sys_prompt = "You are NeurOS, a personal AI assistant. Be direct and concise."
         messages: list[dict] = [{"role": "system", "content": sys_prompt}]
         if context:

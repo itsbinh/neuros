@@ -20,6 +20,7 @@ class QueryInput(BaseModel):
     text: str = Field(..., description="User query text")
     image_url: str | None = None
     session_id: str | None = None
+    model_name: str | None = None
 
 
 class ActionInput(BaseModel):
@@ -142,6 +143,7 @@ class NeurOSState(TypedDict, total=False):
     skill_results: list[Any]
     skill_used: str | None
     model_used: str
+    model_name: str | None
     latency_ms: int
     intent: str
     error: str | None

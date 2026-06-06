@@ -187,7 +187,7 @@ def _make_think(memory: Any, registry: Any = None):
         input_text = state.get("input", "")
         context = state.get("context") or []
 
-        model_config = select_model(TaskType.REASONING)
+        model_config = select_model(TaskType.REASONING, state.get("model_name"))
 
         messages: list[dict] = [
             {
