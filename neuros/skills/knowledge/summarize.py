@@ -45,7 +45,9 @@ class SummarizeSkill(BaseSkill):
                     messages=[
                         {
                             "role": "user",
-                            "content": f"Combine these summaries into one cohesive summary:\n\n{combined}",
+                            "content": (
+                                f"Combine these summaries into one cohesive summary:\n\n{combined}"
+                            ),
                         }
                     ],
                     base_url=model.base_url,

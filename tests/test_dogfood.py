@@ -7,8 +7,7 @@ when that's simpler than mocking pathlib.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -207,7 +206,7 @@ def _make_proposal(path: str, original: str, replacement: str, status="approved"
         original=original,
         replacement=replacement,
         tests_affected=["tests/"],
-        proposed_at=datetime.now(timezone.utc),
+        proposed_at=datetime.now(UTC),
         status=status,
     )
 
@@ -389,7 +388,7 @@ def test_run_tests_parses_pytest_output():
 @pytest.mark.asyncio
 async def test_run_tests_timeout_handled(fake_root, monkeypatch):
     async def fake_wait(*a, **kw):
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
 
     monkeypatch.setattr(asyncio, "wait_for", fake_wait)
 

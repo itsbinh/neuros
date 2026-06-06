@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from neuros.memory.postgres import Base, Fact, Interaction
 
 

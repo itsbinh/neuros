@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     VISION = "vision"
     REASONING = "reasoning"
     FAST = "fast"
@@ -34,7 +34,7 @@ class Memory(BaseModel):
     text: str
     source: str | None = None
     tags: list[str] = Field(default_factory=list)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     session_id: str | None = None
     score: float | None = None
 
@@ -125,7 +125,7 @@ class ProposedChange(BaseModel):
     original: str
     replacement: str
     tests_affected: list[str] = Field(default_factory=list)
-    proposed_at: datetime = Field(default_factory=datetime.utcnow)
+    proposed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     status: str = "pending"  # "pending" | "approved" | "rejected" | "applied" | "failed"
     applied_at: datetime | None = None
     test_result: str | None = None

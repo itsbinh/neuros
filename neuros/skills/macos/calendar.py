@@ -50,8 +50,9 @@ class CalendarSkill(BaseSkill):
         script = f'''
             tell application "Calendar"
                 tell calendar "{calendar}"
-                    make new event with properties \
-                        {{summary:"{summary}", start date:{start}, duration:{duration * 60}}}
+                    set newEvent to make new event with properties {{summary:"{summary}"}}
+                    set start date of newEvent to date "{start}"
+                    set duration of newEvent to {duration * 60}
                 end tell
             end tell
         '''

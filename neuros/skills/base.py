@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time as _time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -58,6 +59,17 @@ class Skill(BaseSkill):
 
     @abstractmethod
     async def execute(self, **params: Any) -> SkillResult: ...
+
+
+async def run_skill(skill: BaseSkill, **params: Any) -> SkillResult:
+    """Run a skill and record telemetry."""
+    from neuros import telemetry as _telemetry
+
+    t0 = _time.monotonic()
+    result = await skill.run(**params)
+    duration_ms = int((_time.monotonic() - t0) * 1000)
+    _telemetry.record(skill.name, result.success, duration_ms, result.error)
+    return result
 
 
 def skill(name: str, description: str = ""):

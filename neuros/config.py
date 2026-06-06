@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     lts1_base_url: str = "http://lts1:8000"
     lts1_embed_url: str = "http://lts1:8005"
     mac_mini_url: str = "http://mac:8001"
-    model_fast: str = "qwen35"
+    model_fast: str = "qwen27"
     model_vision: str = "qwen27-vision"
     model_local: str = "gemma-4-e2b"
 

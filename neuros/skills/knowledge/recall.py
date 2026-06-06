@@ -24,8 +24,8 @@ class RecallSkill(BaseSkill):
             results = [
                 {
                     "text": m.text,
-                    "source": m.source,
-                    "tags": m.tags,
+                    "source": m.metadata.get("source"),
+                    "tags": m.metadata.get("tags", []),
                     "score": m.score,
                 }
                 for m in memories

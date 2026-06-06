@@ -14,6 +14,16 @@ from neuros.skills.base import BaseSkill, SkillResult, skill
 logger = logging.getLogger("neuros.skills.infra.ssh")
 
 
+_HOST_USER_MAP: dict[str, str] = {}
+
+
+def _user_for_host(host: str) -> str:
+    if not _HOST_USER_MAP:
+        _HOST_USER_MAP[settings.lts1_host] = settings.ssh_user_lts1
+        _HOST_USER_MAP[settings.lts2_host] = settings.ssh_user_lts2
+    return _HOST_USER_MAP.get(host, "neuros")
+
+
 class SSHConnection:
     """Persistent SSH client wrapper."""
 
@@ -24,11 +34,14 @@ class SSHConnection:
     def connect(self) -> None:
         """Establish SSH connection using pre-shared keys."""
         self._client = paramiko.SSHClient()
-        self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self._client.set_missing_host_key_policy(paramiko.RejectPolicy())
         key_path = os.path.expanduser(settings.ssh_key_path)
+        known_hosts = os.path.expanduser("~/.ssh/known_hosts")
+        if os.path.exists(known_hosts):
+            self._client.load_host_keys(known_hosts)
         self._client.connect(
             hostname=self.host,
-            username="neuros",  # adjust as needed
+            username=_user_for_host(self.host),
             key_filename=key_path,
             timeout=10,
         )
@@ -70,5 +83,10 @@ class SSHSkill(BaseSkill):
             if exit_code != 0:
                 return SkillResult.fail(f"Exit code {exit_code}: {stderr.strip()}")
             return SkillResult.ok({"stdout": stdout.strip(), "host": host})
+        except paramiko.SSHException as exc:
+            msg = str(exc)
+            if "not found in known_hosts" in msg or "Server" in msg:
+                msg += f" — run: ssh-keyscan {host} >> ~/.ssh/known_hosts"
+            return SkillResult.fail(msg)
         except Exception as exc:
             return SkillResult.fail(str(exc))

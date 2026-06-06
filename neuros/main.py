@@ -88,6 +88,39 @@ async def lifespan(app: FastAPI):
     )
     await graphiti.initialize()
 
+    try:
+        import httpx as _httpx
+
+        async with _httpx.AsyncClient(timeout=5.0) as _hc:
+            _r = await _hc.get(f"{settings.lts1_base_url}/v1/models")
+        if _r.status_code == 200:
+            _live = {m.get("id", m.get("name", "")) for m in _r.json().get("data", [])}
+            for _m in get_models():
+                if _m.base_url == settings.lts1_base_url and _m.name not in _live:
+                    logger.warning(
+                        "Model '%s' in registry but not served by %s — selector may fail",
+                        _m.name,
+                        settings.lts1_base_url,
+                    )
+    except Exception as _e:
+        logger.info("Model-mismatch check skipped (server unreachable): %s", _e)
+
+    # Warm the default model so the first user request doesn't hit a cold-load race.
+    try:
+        from neuros.llm.client import chat as _chat
+
+        _warm_model = select_model().name
+        logger.info("Warming model '%s'...", _warm_model)
+        await _chat(
+            model=_warm_model,
+            messages=[{"role": "user", "content": "hi"}],
+            base_url=settings.lts1_base_url,
+            max_tokens=1,
+        )
+        logger.info("Model '%s' warm.", _warm_model)
+    except Exception as _e:
+        logger.warning("Model warmup failed (first query may be slow): %s", _e)
+
     memory = MemoryManager(qdrant=qdrant, redis=redis, postgres=postgres, graphiti=graphiti)
     memory_module.manager = memory
     registry = SkillRegistry.auto_discover()
@@ -211,7 +244,6 @@ async def query(input: QueryInput) -> NeurOSResponse:
         "context": [],
         "response": "",
         "tool_calls": [],
-        "skill_result": None,
         "model_used": "",
         "latency_ms": 0,
         "error": None,
@@ -258,7 +290,7 @@ async def query_stream(input: QueryInput) -> StreamingResponse:
     async def event_gen():
         async def emit_text(text: str):
             for idx in range(0, len(text), 6):
-                yield f"data: {json.dumps({'token': text[idx:idx + 6]})}\n\n"
+                yield f"data: {json.dumps({'token': text[idx : idx + 6]})}\n\n"
                 await asyncio.sleep(0.006)
 
         if text.lower().startswith("search:"):
@@ -427,12 +459,15 @@ async def git_status_endpoint() -> dict:
 async def action(input: ActionInput) -> NeurOSResponse:
     """Invoke a specific skill directly by name."""
     session_id = input.session_id or str(uuid.uuid4())
+    t0 = time.monotonic()
     result = await app.state.registry.execute(input.skill, **input.params)
+    latency_ms = int((time.monotonic() - t0) * 1000)
     if not result.success:
         raise HTTPException(status_code=400, detail=result.error or "Skill execution failed")
     return NeurOSResponse(
         text=str(result.data),
         model_used=input.skill,
         skill_used=input.skill,
+        latency_ms=latency_ms,
         session_id=session_id,
     )

@@ -5,13 +5,12 @@ All tests mock Neo4j and Graphiti — no live graph required.
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from neuros.models import GraphEntity, GraphMemoryResult, GraphRelation, TimelineEvent
-
+from neuros.models import GraphEntity, GraphMemoryResult, GraphRelation
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -301,8 +300,8 @@ async def test_health_includes_graphiti():
 
 @pytest.mark.asyncio
 async def test_remember_skill_calls_remember_entity():
-    from neuros.skills.knowledge.remember import RememberSkill
     import neuros.memory.manager as mm
+    from neuros.skills.knowledge.remember import RememberSkill
 
     mock_manager = MagicMock()
     mock_manager.remember_entity = AsyncMock(return_value="ep-abc")
@@ -323,8 +322,8 @@ async def test_remember_skill_calls_remember_entity():
 
 @pytest.mark.asyncio
 async def test_forget_skill_calls_invalidate_fact():
-    from neuros.skills.knowledge.remember import ForgetSkill
     import neuros.memory.manager as mm
+    from neuros.skills.knowledge.remember import ForgetSkill
 
     mock_manager = MagicMock()
     mock_manager.invalidate_fact = AsyncMock(return_value=True)
@@ -348,9 +347,9 @@ async def test_forget_skill_calls_invalidate_fact():
 
 @pytest.mark.asyncio
 async def test_what_do_you_know_merges_all_sources():
-    from neuros.skills.knowledge.remember import WhatDoYouKnowSkill
-    from neuros.models import MemoryResult
     import neuros.memory.manager as mm
+    from neuros.models import MemoryResult
+    from neuros.skills.knowledge.remember import WhatDoYouKnowSkill
 
     entity = GraphEntity(
         uuid="u1",

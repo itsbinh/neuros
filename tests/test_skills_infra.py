@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from neuros.skills.base import SkillResult
-
 
 @pytest.mark.asyncio
 async def test_ssh_skill_missing_params() -> None:
@@ -51,10 +49,12 @@ async def test_nas_skill_unknown_action() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nas_skill_browse_returns_stub() -> None:
-    """NAS browse returns a stub response."""
+async def test_nas_skill_requires_password() -> None:
+    """NAS skill fails gracefully when NAS_PASSWORD is not configured."""
     from neuros.skills.infra.nas import NASSkill
 
     skill = NASSkill()
     result = await skill.run(action="browse", path="/home")
-    assert result.success is True
+    # Without NAS_PASSWORD set, expect a clean failure not a crash
+    assert result.success is False
+    assert "NAS_PASSWORD" in (result.error or "")

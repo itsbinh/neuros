@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import time
 
 from neuros.config import settings
 
@@ -122,11 +121,12 @@ async def main() -> None:
     # ── 9. MERGED_RECALL ──────────────────────────────────────────
     print("\n[9] MERGED_RECALL")
     from qdrant_client import AsyncQdrantClient
+
     from neuros.llm.embedder import embed as embed_fn
+    from neuros.memory.manager import MemoryManager
+    from neuros.memory.postgres import PostgresStore
     from neuros.memory.qdrant import QdrantStore
     from neuros.memory.redis import RedisStore
-    from neuros.memory.postgres import PostgresStore
-    from neuros.memory.manager import MemoryManager
 
     qdrant_client = AsyncQdrantClient(url=settings.qdrant_url)
     qdrant = QdrantStore(embedder=embed_fn, client=qdrant_client)

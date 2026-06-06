@@ -41,3 +41,6 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: requires live server at 127.0.0.1:8080 (run via `make test-integration`)",
+]

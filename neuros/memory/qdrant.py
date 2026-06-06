@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from qdrant_client import AsyncQdrantClient
@@ -72,7 +72,7 @@ class QdrantStore:
         """Embed text and upsert to Qdrant. Returns point_id (uuid4)."""
         vector = await self._embed(text)
         point_id = str(uuid.uuid4())
-        payload = {"text": text, "timestamp": datetime.utcnow().isoformat(), **metadata}
+        payload = {"text": text, "timestamp": datetime.now(UTC).isoformat(), **metadata}
         await self._client.upsert(
             collection_name=self._collection,
             points=[qmodels.PointStruct(id=point_id, vector=vector, payload=payload)],

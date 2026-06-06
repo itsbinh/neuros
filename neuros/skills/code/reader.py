@@ -112,9 +112,7 @@ class ListFilesSkill(BaseSkill):
                     {
                         "path": str(p.relative_to(root)),
                         "size_bytes": stat.st_size,
-                        "modified": datetime.fromtimestamp(
-                            stat.st_mtime, tz=UTC
-                        ).isoformat(),
+                        "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
                     }
                 )
             except OSError:

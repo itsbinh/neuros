@@ -1,4 +1,4 @@
-.PHONY: dev setup setup-dogfood test-stack test-graphiti neo4j-shell graph-stats test lint fmt overlay-install daemon-install daemon-uninstall daemon-logs
+.PHONY: dev setup setup-dogfood test-stack test-graphiti neo4j-shell graph-stats test test-integration lint fmt overlay-install daemon-install daemon-uninstall daemon-logs
 
 dev:
 	uvicorn neuros.main:app --reload --host 127.0.0.1 --port 8080
@@ -34,7 +34,19 @@ async def main(): \
 asyncio.run(main())"
 
 test:
-	pytest tests/
+	pytest tests/ --ignore=tests/test_integration.py
+
+test-integration:
+	@echo "Checking server at 127.0.0.1:8080..."
+	@curl -sf http://127.0.0.1:8080/health > /dev/null || \
+		(echo "\n❌  Server not running. Start with: make dev\n" && exit 1)
+	@curl -s http://127.0.0.1:8080/health | python3 -c "\
+import json,sys; h=json.load(sys.stdin); m=h.get('memory',{}); \
+bad=[k for k,v in m.items() if v not in ('ok', {'status':'disabled'})]; \
+print('  stores:', json.dumps(m)); \
+[print(f'  ⚠️  {k}: {v}') for k,v in m.items() if v != 'ok']; \
+print(f'  skills: {h.get(\"skills_loaded\",0)} loaded')"
+	NEUROS_INTEGRATION=1 pytest tests/test_integration.py -v
 
 lint:
 	ruff check . && ruff format --check .

@@ -11,9 +11,9 @@ def select_model(task: TaskType = TaskType.REASONING, model_name: str | None = N
     """Select the best model for a given task type.
 
     Routing rules:
-        vision    → qwen3-27b (lts1:8000)
-        reasoning → qwen3-35b-a3b (lts1:8000)
-        fast      → gemma-4 (mac-mini:8001)
+        vision    → qwen27-vision (lts1:8000)
+        reasoning → qwen27 (lts1:8000)
+        fast      → gemma-4-e2b (mac-mini:8001)
     """
     if model_name is None:
         model_name = {

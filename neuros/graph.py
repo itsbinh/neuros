@@ -30,6 +30,86 @@ class AgentState:
     llm_response: str = ""
 
 
+_CAPTURE_SIGNALS = {
+    "mistake": [
+        "error",
+        "failed",
+        "bug",
+        "traceback",
+        "exception",
+        "timeout",
+        "connection refused",
+        "permission denied",
+        "not found",
+        "invalid",
+        "corrupt",
+        "crash",
+        "broken",
+        "fix",
+        "resolved",
+        "workaround",
+    ],
+    "decision": [
+        "decided",
+        "chose",
+        "going with",
+        "switching to",
+        "migrating",
+        "we'll use",
+        "using",
+        "adopting",
+        "replacing",
+        "deprecating",
+    ],
+    "solution": [
+        "solution",
+        "fixed by",
+        "the fix was",
+        "turns out",
+        "root cause",
+        "it works",
+        "working now",
+        "resolved by",
+        "the trick is",
+    ],
+    "correction": [
+        "actually",
+        "that's wrong",
+        "correction",
+        "not quite",
+        "should be",
+        "instead use",
+        "don't do that",
+    ],
+}
+
+
+def _classify_capture(text: str) -> str | None:
+    """Return category if text is capture-worthy, else None."""
+    text_lower = text.lower()
+    scores: dict[str, int] = {}
+    for category, signals in _CAPTURE_SIGNALS.items():
+        count = sum(1 for s in signals if s in text_lower)
+        if count >= 2:
+            scores[category] = count
+    if not scores:
+        return None
+    return max(scores, key=scores.__getitem__)
+
+
+def _compact_context(items: list[str], max_item: int = 500, max_total: int = 2000) -> list[str]:
+    """Trim recall results to keep prompt size bounded."""
+    compacted = []
+    total = 0
+    for item in items:
+        trimmed = item[:max_item] + ("…" if len(item) > max_item else "")
+        if total + len(trimmed) > max_total:
+            break
+        compacted.append(trimmed)
+        total += len(trimmed)
+    return compacted
+
+
 _ENTITY_QUERY_PATTERNS = (
     "what do you know about",
     "tell me about",
@@ -201,10 +281,11 @@ def _make_think(memory: Any, registry: Any = None):
         ]
 
         if context:
+            compacted = _compact_context(context)
             messages.append(
                 {
                     "role": "system",
-                    "content": "Relevant context:\n" + "\n".join(context),
+                    "content": "Relevant context:\n" + "\n".join(compacted),
                 }
             )
 
@@ -275,7 +356,15 @@ def _make_act(registry: Any, memory: Any):
             skill_names.append(skill_name)
             logger.info("act: executing skill=%s args=%s", skill_name, kwargs)
 
+            _t0 = time.monotonic()
             result = await registry.execute(skill_name, **kwargs)
+            _dur = int((time.monotonic() - _t0) * 1000)
+            try:
+                from neuros import telemetry as _tel
+
+                _tel.record(skill_name, result.success, _dur, getattr(result, "error", None))
+            except Exception:
+                pass
 
             if result.success:
                 skill_results.append(result.data)
@@ -321,17 +410,29 @@ def _make_store(memory: Any):
             logger.warning("store: push_recent(response) failed [session=%s]: %s", session_id, e)
 
         try:
-            await memory.store(
-                input_text,
-                {
-                    "source": "user",
-                    "session_id": session_id,
-                    "type": "interaction",
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-            )
+            category = _classify_capture(response)
+            resp_meta: dict = {"source": "agent", "session_id": session_id}
+            if category:
+                resp_meta["category"] = category
+                resp_meta["capture_worthy"] = True
+            await memory.store(response, resp_meta)
         except Exception as e:
-            logger.warning("store: memory.store failed [session=%s]: %s", session_id, e)
+            logger.warning("store: memory.store(response) failed [session=%s]: %s", session_id, e)
+
+        try:
+            input_category = _classify_capture(input_text)
+            input_meta: dict = {
+                "source": "user",
+                "session_id": session_id,
+                "type": "interaction",
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+            if input_category:
+                input_meta["category"] = input_category
+                input_meta["capture_worthy"] = True
+            await memory.store(input_text, input_meta)
+        except Exception as e:
+            logger.warning("store: memory.store(input) failed [session=%s]: %s", session_id, e)
 
         if skill_used:
             try:
@@ -419,7 +520,10 @@ def _make_dogfood(memory: Any):
                             path = matches[0]["file"]
                 if not path:
                     return {
-                        "response": "Could not identify a file to improve. Specify a path like neuros/memory/manager.py.",
+                        "response": (
+                            "Could not identify a file to improve."
+                            " Specify a path like neuros/memory/manager.py."
+                        ),
                         "skill_used": "propose_improvement",
                     }
 
@@ -440,8 +544,10 @@ def _make_dogfood(memory: Any):
                     f"Why: {p['reason']}\n"
                     f"Risk: {p['risk']}\n"
                     f"Tests: {', '.join(p['tests_affected']) or '(none specified)'}\n\n"
-                    f"Original:\n{p['original'][:200]}{'...' if len(p['original']) > 200 else ''}\n\n"
-                    f"Replacement:\n{p['replacement'][:200]}{'...' if len(p['replacement']) > 200 else ''}\n\n"
+                    f"Original:\n{p['original'][:200]}"
+                    f"{'...' if len(p['original']) > 200 else ''}\n\n"
+                    f"Replacement:\n{p['replacement'][:200]}"
+                    f"{'...' if len(p['replacement']) > 200 else ''}\n\n"
                     f"Reply 'apply {p['id']}' to apply, or 'reject {p['id']}' to discard."
                 )
                 return {"response": text, "skill_used": "propose_improvement"}
@@ -451,7 +557,10 @@ def _make_dogfood(memory: Any):
 
                 path = _extract_path(input_text)
                 if not path:
-                    return {"response": "Could not identify a file to read.", "skill_used": "read_file"}
+                    return {
+                        "response": "Could not identify a file to read.",
+                        "skill_used": "read_file",
+                    }
                 path = _resolve_obvious_path(path)
 
                 read_result = await ReadFileSkill().run(path=path)
@@ -550,14 +659,20 @@ def _make_dogfood(memory: Any):
             if intent == "dogfood_commit":
                 applied = await postgres.latest_proposal(status="applied")
                 if applied is None:
-                    return {"response": "No applied proposals to commit.", "skill_used": "git_commit"}
+                    return {
+                        "response": "No applied proposals to commit.",
+                        "skill_used": "git_commit",
+                    }
 
                 msg = f"improve({applied.path}): {applied.summary}"
                 cr = await GitCommitSkill().run(message=msg, confirmed=True)
                 if not cr.success:
                     return {"response": f"Commit failed: {cr.error}", "skill_used": "git_commit"}
                 d = cr.data
-                return {"response": f"✅ Committed: {d['hash']}\n{d['message']}", "skill_used": "git_commit"}
+                return {
+                    "response": f"✅ Committed: {d['hash']}\n{d['message']}",
+                    "skill_used": "git_commit",
+                }
 
             if intent == "dogfood_reject":
                 m = _UUID_RE.search(input_text)
@@ -589,8 +704,18 @@ def _make_dogfood(memory: Any):
 
 
 async def intake(state: NeurOSState | AgentState) -> dict:
+    from neuros.security.injection import check as injection_check
+
     if isinstance(state, dict):
-        logger.info("intake: %s", state.get("input", "")[:80])
+        input_text = state.get("input", "")
+        logger.info("intake: %s", input_text[:80])
+        result = injection_check(input_text)
+        if result.blocked:
+            msg = (
+                f"Input blocked: possible prompt injection"
+                f" (score={result.score:.2f}, triggers={result.triggered})."
+            )
+            return {"response": msg, "error": "injection_blocked"}
         return {}
 
     if getattr(state, "input_text", None) is not None:
@@ -634,7 +759,11 @@ def build_graph(memory: Any = None, registry: Any = None) -> Any:
     graph.add_node("respond", _make_respond(memory))
 
     graph.add_edge(START, "intake")
-    graph.add_edge("intake", "recall")
+    graph.add_conditional_edges(
+        "intake",
+        lambda s: "end" if s.get("error") == "injection_blocked" else "recall",
+        {"recall": "recall", "end": END},
+    )
     graph.add_conditional_edges(
         "recall",
         _route_after_recall,
