@@ -18,7 +18,7 @@ def _make_client(base_url: str) -> AsyncOpenAI:
     """Create an async OpenAI-compatible client."""
     return AsyncOpenAI(
         api_key="local",  # local endpoints don't need auth
-        base_url=base_url,
+        base_url=base_url.rstrip("/") + "/v1",
         timeout=httpx.Timeout(120.0, connect=10.0),
     )
 

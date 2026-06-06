@@ -3,6 +3,8 @@ local OVERLAY_HTML = [[
 <html>
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
@@ -396,9 +398,9 @@ local OVERLAY_HTML = [[
       statusDot.dataset.state = resp.ok ? 'online' : 'offline';
       statusDot.title = resp.ok ? 'Agent online' : 'Agent offline';
       if (resp.ok && modelSelect.disabled) loadModels();
-    } catch {
+    } catch (e) {
       statusDot.dataset.state = 'offline';
-      statusDot.title = 'Agent offline';
+      statusDot.title = 'Agent offline: ' + e.name + ': ' + e.message;
     }
   }
 
@@ -465,7 +467,7 @@ local OVERLAY_HTML = [[
     if (!v || _abort) return;
 
     _hist.push(v);
-    _histIdx = Math.max(0, _hist.length - 1);
+    _histIdx = _hist.length;
 
     q.disabled = true;
     q.value = '';
@@ -486,46 +488,67 @@ local OVERLAY_HTML = [[
       await refreshHealth();
       if (statusDot.dataset.state === 'offline') throw new Error('Agent offline');
 
+      const body = JSON.stringify({
+        text: v,
+        session_id: SESSION_ID,
+        model_name: selectedModelName(),
+      });
+
       const resp = await fetch(AGENT_URL + '/query/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: v,
-          session_id: SESSION_ID,
-          model_name: selectedModelName(),
-        }),
+        body,
         signal: _abort.signal,
       });
       if (!resp.ok) throw new Error('Agent returned ' + resp.status);
 
-      const reader = resp.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
+      // WKWebView's ReadableStream support over HTTP is unreliable — if
+      // resp.body is missing, fall back to reading the whole text and parsing
+      // SSE frames at once.
+      if (!resp.body || typeof resp.body.getReader !== 'function') {
+        const text = await resp.text();
+        for (const line of text.split('\n')) {
           if (!line.startsWith('data: ')) continue;
           let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-          if (evt.token !== undefined) {
-            fullText += evt.token;
-            assistantEl.innerHTML = renderMarkdown(fullText);
-            rwrap.scrollTop = rwrap.scrollHeight;
-          }
+          if (evt.token !== undefined) fullText += evt.token;
           if (evt.done) {
             modelUsed = evt.model || '';
             latencyMs = evt.latency_ms || 0;
             skillUsed = evt.skill_used || '';
           }
         }
+        assistantEl.innerHTML = renderMarkdown(fullText);
+      } else {
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+            if (evt.token !== undefined) {
+              fullText += evt.token;
+              assistantEl.innerHTML = renderMarkdown(fullText);
+              rwrap.scrollTop = rwrap.scrollHeight;
+            }
+            if (evt.done) {
+              modelUsed = evt.model || '';
+              latencyMs = evt.latency_ms || 0;
+              skillUsed = evt.skill_used || '';
+            }
+          }
+        }
       }
     } catch (e) {
       if (e.name !== 'AbortError') {
-        assistantEl.textContent = 'Error: ' + e.message;
+        assistantEl.textContent =
+          'Error: ' + e.name + ': ' + e.message +
+          ' (origin=' + location.origin + ')';
         assistantEl.className = 'msg assistant err';
       }
     }
@@ -758,21 +781,10 @@ local function buildWebview()
     obj:allowTextEntry(true)
     obj:html(OVERLAY_HTML)
 
-    -- polling bridge (userContentController unavailable in this HS version)
-    hs.timer.doEvery(0.05, function()
-        if not isVisible then return end
-        local ok, result = pcall(
-            obj.evaluateJavaScript, obj,
-            'try{return JSON.stringify(window.__n_msg)}catch(e){return null}'
-        )
-        if not ok or not result or result == 'null' or result == 'undefined' then
-            return
-        end
-        local msgOk, msg = pcall(hs.json.decode, result)
-        if not msgOk or type(msg) ~= 'table' or not msg.type then return end
-        -- Clear the slot before handling (lets JS queue next message)
-        obj:evaluateJavaScript('window.__n_msg=null')
-
+    -- polling bridge: hs.webview:evaluateJavaScript is async and returns nil
+    -- synchronously, so we must use the callback form to read the result.
+    -- The script must be a plain expression (no top-level `return`).
+    local function handleBridgeMessage(msg)
         if msg.type == 'resize' then
             local h = tonumber(msg.body) or PANEL_H_MIN
             h = math.max(PANEL_H_MIN, math.min(h, PANEL_H_MAX))
@@ -784,6 +796,20 @@ local function buildWebview()
         elseif msg.type == 'mic' then
             startDictation()
         end
+    end
+
+    hs.timer.doEvery(0.1, function()
+        if not isVisible then return end
+        obj:evaluateJavaScript(
+            'JSON.stringify(window.__n_msg||null)',
+            function(result, _err)
+                if not result or result == 'null' then return end
+                local msgOk, msg = pcall(hs.json.decode, result)
+                if not msgOk or type(msg) ~= 'table' or not msg.type then return end
+                obj:evaluateJavaScript('window.__n_msg=null')
+                handleBridgeMessage(msg)
+            end
+        )
     end)
 
     return obj
