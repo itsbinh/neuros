@@ -43,5 +43,6 @@ fmt:
 	ruff format .
 
 overlay-install:
-	cp overlay/init.lua ~/.hammerspoon/init.lua
-	@echo "Reload Hammerspoon: CMD+SHIFT+R"
+	cp overlay/init.lua ~/dotfiles/mac/.hammerspoon/init.lua
+	osascript -e 'tell application "System Events" to tell process "Hammerspoon" to keystroke "r" using {shift down, command down}'
+	@echo "Overlay installed and reloaded"
