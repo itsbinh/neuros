@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import logging
 
-import httpx
-
-from neuros.config import settings
 from neuros.skills.base import BaseSkill, SkillResult, skill
 
 logger = logging.getLogger("neuros.skills.infra.nas")

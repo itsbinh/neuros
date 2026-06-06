@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
-from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 logger = logging.getLogger("neuros.llm.client")
 
@@ -81,7 +82,10 @@ async def chat(
             wait = 2**attempt
             logger.warning(
                 "chat attempt %d/%d failed (%s), retrying in %ds",
-                attempt + 1, _MAX_RETRIES, exc, wait,
+                attempt + 1,
+                _MAX_RETRIES,
+                exc,
+                wait,
             )
             await _async_sleep(wait)
         except Exception as exc:

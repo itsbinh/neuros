@@ -13,7 +13,9 @@ logger = logging.getLogger("neuros.skills.macos.system")
 async def _run_applescript(script: str) -> str:
     """Execute an AppleScript and return stdout."""
     proc = await asyncio.create_subprocess_exec(
-        "osascript", "-e", script,
+        "osascript",
+        "-e",
+        script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -44,7 +46,7 @@ class SystemSkill(BaseSkill):
             return SkillResult.fail(str(exc))
 
     async def _clipboard_read(self, params: dict) -> SkillResult:
-        script = 'get the clipboard'
+        script = "get the clipboard"
         text = await _run_applescript(script)
         return SkillResult.ok({"clipboard": text})
 

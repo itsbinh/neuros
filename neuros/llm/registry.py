@@ -19,6 +19,7 @@ class ModelConfig:
 
 # ── Default model registrations ──────────────────────────────────
 
+
 def get_models() -> list[ModelConfig]:
     """Return all registered models."""
     return [

@@ -114,8 +114,15 @@ async def test_get_entity_found():
     store = _make_store(MagicMock())
 
     # Mock the Neo4j driver path used by get_entity
-    mock_record = {"n": {"uuid": "u1", "name": "lts1", "entity_type": "server",
-                         "summary": "GPU server", "created_at": None}}
+    mock_record = {
+        "n": {
+            "uuid": "u1",
+            "name": "lts1",
+            "entity_type": "server",
+            "summary": "GPU server",
+            "created_at": None,
+        }
+    }
     mock_result = MagicMock()
     mock_result.single = AsyncMock(return_value=mock_record)
     mock_session = MagicMock()
@@ -226,7 +233,9 @@ async def test_manager_recall_merges_qdrant_and_graphiti():
     from neuros.models import MemoryResult
 
     qdrant_result = MemoryResult(id="q1", text="qdrant result", score=0.8, metadata={})
-    graph_result = GraphMemoryResult(content="graph fact", score=0.9, entity_names=["lts1"], source="user")
+    graph_result = GraphMemoryResult(
+        content="graph fact", score=0.9, entity_names=["lts1"], source="user"
+    )
 
     graphiti = MagicMock()
     graphiti.search = AsyncMock(return_value=[graph_result])
@@ -305,7 +314,9 @@ async def test_remember_skill_calls_remember_entity():
         result = await skill.execute(content="lts1 is my GPU server", session_id="s1")
         assert result.success
         assert result.output["stored"] is True
-        mock_manager.remember_entity.assert_called_once_with("lts1 is my GPU server", session_id="s1")
+        mock_manager.remember_entity.assert_called_once_with(
+            "lts1 is my GPU server", session_id="s1"
+        )
     finally:
         mm.manager = original
 
@@ -317,6 +328,7 @@ async def test_forget_skill_calls_invalidate_fact():
 
     mock_manager = MagicMock()
     mock_manager.invalidate_fact = AsyncMock(return_value=True)
+    mock_manager.forget_by_query = AsyncMock(return_value=2)
 
     original = mm.manager
     mm.manager = mock_manager
@@ -325,7 +337,11 @@ async def test_forget_skill_calls_invalidate_fact():
         result = await skill.execute(subject="lts1", fact="runs old model")
         assert result.success
         assert result.output["invalidated"] == 1
-        mock_manager.invalidate_fact.assert_called_once_with("lts1", "runs old model", reason="runs old model")
+        assert result.output["qdrant_deleted"] == 2
+        mock_manager.invalidate_fact.assert_called_once_with(
+            "lts1", "runs old model", reason="runs old model"
+        )
+        mock_manager.forget_by_query.assert_called_once_with("lts1 runs old model")
     finally:
         mm.manager = original
 
@@ -337,8 +353,11 @@ async def test_what_do_you_know_merges_all_sources():
     import neuros.memory.manager as mm
 
     entity = GraphEntity(
-        uuid="u1", name="lts1", entity_type="server",
-        summary="GPU server", created_at=datetime(2024, 1, 1, tzinfo=UTC)
+        uuid="u1",
+        name="lts1",
+        entity_type="server",
+        summary="GPU server",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     qdrant_result = MemoryResult(id="q1", text="lts1 hosts models", score=0.8, metadata={})
 

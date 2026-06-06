@@ -1,4 +1,4 @@
-.PHONY: dev setup setup-dogfood test-stack test-graphiti neo4j-shell graph-stats test lint fmt overlay-install
+.PHONY: dev setup setup-dogfood test-stack test-graphiti neo4j-shell graph-stats test lint fmt overlay-install daemon-install daemon-uninstall daemon-logs
 
 dev:
 	uvicorn neuros.main:app --reload --host 127.0.0.1 --port 8080
@@ -46,3 +46,17 @@ overlay-install:
 	cp overlay/init.lua ~/dotfiles/mac/.hammerspoon/init.lua
 	osascript -e 'tell application "System Events" to tell process "Hammerspoon" to keystroke "r" using {shift down, command down}'
 	@echo "Overlay installed and reloaded"
+
+daemon-install:
+	mkdir -p ~/Library/Logs/neuros
+	cp scripts/launchd/com.neuros.agent.plist ~/Library/LaunchAgents/
+	launchctl load -w ~/Library/LaunchAgents/com.neuros.agent.plist
+	@echo "NeurOS daemon installed and started"
+
+daemon-uninstall:
+	-launchctl unload -w ~/Library/LaunchAgents/com.neuros.agent.plist
+	-rm ~/Library/LaunchAgents/com.neuros.agent.plist
+	@echo "NeurOS daemon removed"
+
+daemon-logs:
+	tail -f ~/Library/Logs/neuros/agent.log

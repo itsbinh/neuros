@@ -78,8 +78,7 @@ async def main() -> None:
     await asyncio.sleep(2)  # let Graphiti extract entities
     search_results = await store.search("NeurOS", k=3)
     found = any(
-        "neuros" in r.content.lower() or "lts1" in r.content.lower()
-        for r in search_results
+        "neuros" in r.content.lower() or "lts1" in r.content.lower() for r in search_results
     )
     record("ENTITY_EXTRACT", found, f"{len(search_results)} result(s)")
 
@@ -139,14 +138,17 @@ async def main() -> None:
     merged = await mem.recall("tell me about lts1", k=5, session_id="test-graphiti-001")
     has_graph = any(r.metadata.get("source") == "graphiti" for r in merged)
     has_qdrant = any(r.metadata.get("source") != "graphiti" for r in merged)
-    record("MERGED_RECALL", len(merged) > 0, f"{len(merged)} result(s), graph={has_graph}, qdrant={has_qdrant}")
+    record(
+        "MERGED_RECALL",
+        len(merged) > 0,
+        f"{len(merged)} result(s), graph={has_graph}, qdrant={has_qdrant}",
+    )
 
     # ── 10. HEALTH ────────────────────────────────────────────────
     print("\n[10] HEALTH")
     health = await mem.health()
     all_ok = all(
-        (v == "ok" if isinstance(v, str) else v.get("status") == "ok")
-        for v in health.values()
+        (v == "ok" if isinstance(v, str) else v.get("status") == "ok") for v in health.values()
     )
     record("HEALTH", all_ok, str(health))
 

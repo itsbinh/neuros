@@ -266,9 +266,13 @@ async def test_apply_change_restores_backup_on_test_failure(fake_root):
     mock_pg.update_proposal_status = AsyncMock()
     mock_mgr = MagicMock(_postgres=mock_pg)
 
-    fail = MagicMock(success=True, data={"passed": 0, "failed": 1, "success": False, "output": "BOOM"})
-    with patch("neuros.memory.manager.manager", mock_mgr), \
-         patch.object(RunTestsSkill, "run", AsyncMock(return_value=fail)):
+    fail = MagicMock(
+        success=True, data={"passed": 0, "failed": 1, "success": False, "output": "BOOM"}
+    )
+    with (
+        patch("neuros.memory.manager.manager", mock_mgr),
+        patch.object(RunTestsSkill, "run", AsyncMock(return_value=fail)),
+    ):
         result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
 
     assert result.success
@@ -299,8 +303,10 @@ async def test_apply_change_no_tests_collected_falls_back_to_full_suite(fake_roo
         skill_name="run_tests",
     )
 
-    with patch("neuros.memory.manager.manager", mock_mgr), \
-         patch.object(RunTestsSkill, "run", AsyncMock(side_effect=[no_tests, full_suite])):
+    with (
+        patch("neuros.memory.manager.manager", mock_mgr),
+        patch.object(RunTestsSkill, "run", AsyncMock(side_effect=[no_tests, full_suite])),
+    ):
         result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
 
     assert result.success
@@ -331,8 +337,10 @@ async def test_apply_change_full_suite_fails_after_fallback(fake_root):
         skill_name="run_tests",
     )
 
-    with patch("neuros.memory.manager.manager", mock_mgr), \
-         patch.object(RunTestsSkill, "run", AsyncMock(side_effect=[no_tests, full_suite])):
+    with (
+        patch("neuros.memory.manager.manager", mock_mgr),
+        patch.object(RunTestsSkill, "run", AsyncMock(side_effect=[no_tests, full_suite])),
+    ):
         result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
 
     assert result.success
@@ -356,8 +364,10 @@ async def test_apply_change_deletes_backup_on_success(fake_root):
     mock_mgr = MagicMock(_postgres=mock_pg)
 
     ok = MagicMock(success=True, data={"passed": 5, "failed": 0, "success": True, "output": "ok"})
-    with patch("neuros.memory.manager.manager", mock_mgr), \
-         patch.object(RunTestsSkill, "run", AsyncMock(return_value=ok)):
+    with (
+        patch("neuros.memory.manager.manager", mock_mgr),
+        patch.object(RunTestsSkill, "run", AsyncMock(return_value=ok)),
+    ):
         result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
 
     assert result.success
@@ -458,7 +468,9 @@ async def test_run_tests_no_tests_collected_reruns_full_suite(project_settings_r
 
 
 @pytest.mark.asyncio
-async def test_run_tests_missing_list_paths_falls_back_to_full_suite(project_settings_root, monkeypatch):
+async def test_run_tests_missing_list_paths_falls_back_to_full_suite(
+    project_settings_root, monkeypatch
+):
     project_root = project_settings_root
     (project_root / "tests").mkdir()
 
@@ -524,11 +536,11 @@ def test_dogfood_intent_classification():
     assert _classify_dogfood("improve neuros/memory/manager.py") == "improve"
     assert _classify_dogfood("fix the recall node") == "improve"
     assert _classify_dogfood("refactor selector.py") == "improve"
-    assert (
-        _classify_dogfood("apply 12345678-1234-1234-1234-123456789012") == "apply"
-    )
+    assert _classify_dogfood("apply 12345678-1234-1234-1234-123456789012") == "apply"
     assert _classify_dogfood("commit") == "commit"
     assert _classify_dogfood("reject it") == "reject"
+    assert _classify_dogfood("yes") is None
+    assert _classify_dogfood("no") is None
     assert _classify_dogfood("what is the weather") is None
     assert _classify_dogfood("tell me about graphiti") is None
 
@@ -575,8 +587,10 @@ async def test_full_dogfood_loop_propose_approve_apply_commit(fake_root):
     await update(proposal.id, "approved")
 
     ok = MagicMock(success=True, data={"passed": 1, "failed": 0, "success": True, "output": "ok"})
-    with patch("neuros.memory.manager.manager", mock_mgr), \
-         patch.object(RunTestsSkill, "run", AsyncMock(return_value=ok)):
+    with (
+        patch("neuros.memory.manager.manager", mock_mgr),
+        patch.object(RunTestsSkill, "run", AsyncMock(return_value=ok)),
+    ):
         result = await ApplyChangeSkill().run(proposal_id=proposal.id, confirmed=True)
 
     assert result.success

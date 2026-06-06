@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qmodels

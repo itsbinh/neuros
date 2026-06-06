@@ -65,6 +65,8 @@ class NeurOSResponse(BaseModel):
     search_results: list[SearchResult] = Field(default_factory=list)
     actions_taken: list[SkillResult] = Field(default_factory=list)
     model_used: str | None = None
+    skill_used: str | None = None
+    latency_ms: int | None = None
     session_id: str | None = None
 
 

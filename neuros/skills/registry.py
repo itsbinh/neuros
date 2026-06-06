@@ -87,7 +87,7 @@ class SkillRegistry:
         self._skills: dict[str, BaseSkill] = _skills
 
     @classmethod
-    def auto_discover(cls) -> "SkillRegistry":
+    def auto_discover(cls) -> SkillRegistry:
         auto_register()
         return cls()
 

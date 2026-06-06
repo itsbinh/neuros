@@ -36,10 +36,12 @@ class GPUServerSkill(BaseSkill):
         url = f"{settings.lts1_base_url}/health"
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
-        return SkillResult.ok({
-            "status": "ok" if resp.status_code == 200 else "error",
-            "body": resp.text,
-        })
+        return SkillResult.ok(
+            {
+                "status": "ok" if resp.status_code == 200 else "error",
+                "body": resp.text,
+            }
+        )
 
     async def _models(self) -> SkillResult:
         """List loaded models on the router."""

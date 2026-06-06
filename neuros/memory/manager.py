@@ -145,6 +145,19 @@ class MemoryManager:
             return False
         return await self._graphiti.invalidate_fact(subject, predicate, reason)
 
+    async def forget_by_query(self, query: str, k: int = 5, score_threshold: float = 0.85) -> int:
+        """Delete Qdrant vectors semantically similar to query. Returns count deleted."""
+        results = await self._qdrant.search(query, k=k)
+        deleted = 0
+        for r in results:
+            if r.score >= score_threshold:
+                try:
+                    await self._qdrant.delete(r.id)
+                    deleted += 1
+                except Exception as e:
+                    logger.warning("forget_by_query: delete %s failed: %s", r.id, e)
+        return deleted
+
     async def set_context(self, key: str, val: Any, ttl: int = 3600) -> None:
         await self._redis.set_context(key, val, ttl=ttl)
 

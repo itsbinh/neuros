@@ -23,7 +23,7 @@ async def _git(*args: str, timeout: float = 30.0) -> tuple[int, str, str]:
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return 1, "", "git command timed out"
     return (

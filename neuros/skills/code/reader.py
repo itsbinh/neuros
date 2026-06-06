@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from neuros.config import settings
@@ -113,7 +113,7 @@ class ListFilesSkill(BaseSkill):
                         "path": str(p.relative_to(root)),
                         "size_bytes": stat.st_size,
                         "modified": datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
+                            stat.st_mtime, tz=UTC
                         ).isoformat(),
                     }
                 )
@@ -165,7 +165,7 @@ class SearchCodeSkill(BaseSkill):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return SkillResult.fail("search timed out")
         except FileNotFoundError as e:
             return SkillResult.fail(f"search tool missing: {e}")
@@ -184,9 +184,7 @@ class SearchCodeSkill(BaseSkill):
                 line_number = int(lineno)
             except ValueError:
                 continue
-            matches.append(
-                {"file": rel, "line_number": line_number, "line": line, "context": line}
-            )
+            matches.append({"file": rel, "line_number": line_number, "line": line, "context": line})
 
         return SkillResult.ok(
             {"query": query, "matches": matches[:200], "total": len(matches)},

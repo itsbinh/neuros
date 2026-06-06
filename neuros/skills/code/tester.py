@@ -84,7 +84,7 @@ class RunTestsSkill(BaseSkill):
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
             output = stdout.decode("utf-8", errors="replace")
             returncode = proc.returncode
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return SkillResult.fail("pytest timed out after 120s")
         except FileNotFoundError:
             return SkillResult.fail("pytest not installed")
@@ -92,8 +92,10 @@ class RunTestsSkill(BaseSkill):
         duration_ms = int((time.monotonic() - start) * 1000)
         passed, failed, errors = parse_pytest_output(output)
 
-        if allow_fallback and "tests/" not in test_args and (
-            "no tests ran" in output.lower() or "collected 0 items" in output.lower()
+        if (
+            allow_fallback
+            and "tests/" not in test_args
+            and ("no tests ran" in output.lower() or "collected 0 items" in output.lower())
         ):
             logger.warning("No tests collected from specified paths — running full suite")
             return await self._run_pytest("tests/", verbose, allow_fallback=False)

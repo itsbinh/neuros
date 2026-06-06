@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logger = logging.getLogger("neuros.skills")
 
@@ -57,8 +57,7 @@ class Skill(BaseSkill):
         return await self.execute(**params)
 
     @abstractmethod
-    async def execute(self, **params: Any) -> SkillResult:
-        ...
+    async def execute(self, **params: Any) -> SkillResult: ...
 
 
 def skill(name: str, description: str = ""):
@@ -69,8 +68,10 @@ def skill(name: str, description: str = ""):
         class RemindersSkill(BaseSkill):
             ...
     """
+
     def wrapper(cls: type) -> type:
         cls.name = name
         cls.description = description or cls.__doc__ or ""
         return cls
+
     return wrapper

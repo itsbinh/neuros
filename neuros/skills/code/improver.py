@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from neuros.config import settings
@@ -90,13 +90,17 @@ class ProposeImprovementSkill(BaseSkill):
         content = read_result.data["content"]
         project_root = Path(settings.project_root)
         tests_dir = project_root / "tests"
-        test_files = sorted(
-            [
-                f.name
-                for f in tests_dir.iterdir()
-                if f.is_file() and f.name.startswith("test_") and f.suffix == ".py"
-            ]
-        ) if tests_dir.exists() else []
+        test_files = (
+            sorted(
+                [
+                    f.name
+                    for f in tests_dir.iterdir()
+                    if f.is_file() and f.name.startswith("test_") and f.suffix == ".py"
+                ]
+            )
+            if tests_dir.exists()
+            else []
+        )
 
         user_prompt = (
             f"File: {path}\n"
@@ -137,9 +141,7 @@ class ProposeImprovementSkill(BaseSkill):
 
         parsed = _parse_response(response)
         if parsed is None:
-            return SkillResult.fail(
-                f"Could not parse improvement response. Raw:\n{response[:500]}"
-            )
+            return SkillResult.fail(f"Could not parse improvement response. Raw:\n{response[:500]}")
 
         validated_tests: list[str] = []
         for test_name in parsed["tests_affected"]:
@@ -164,7 +166,7 @@ class ProposeImprovementSkill(BaseSkill):
             original=parsed["original"],
             replacement=parsed["replacement"],
             tests_affected=validated_tests,
-            proposed_at=datetime.now(timezone.utc),
+            proposed_at=datetime.now(UTC),
             status="pending",
         )
 

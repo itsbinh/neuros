@@ -29,6 +29,7 @@ class AgentState:
     final_response: str = ""
     llm_response: str = ""
 
+
 _ENTITY_QUERY_PATTERNS = (
     "what do you know about",
     "tell me about",
@@ -73,11 +74,11 @@ def _classify_dogfood(text: str) -> str | None:
     if lower.startswith("understand ") and _extract_path(text):
         return "understand"
 
-    if lower.startswith("apply ") or lower in {"yes apply it", "go ahead", "yes", "apply"}:
+    if lower.startswith("apply ") or lower in {"yes apply it", "go ahead and apply", "apply it"}:
         return "apply"
     if lower in {"commit", "yes commit", "commit it", "yes, commit"}:
         return "commit"
-    if lower.startswith("reject ") or lower in {"no", "discard it", "don't apply", "reject"}:
+    if lower.startswith("reject ") or lower in {"discard it", "don't apply", "reject it"}:
         return "reject"
 
     if any(lower.startswith(p) or (" " + p) in lower for p in _IMPROVE_PATTERNS):
@@ -370,6 +371,18 @@ def _make_respond(memory: Any):
 
         if skill_results:
             logger.info("respond: %d skill result(s) present", len(skill_results))
+            if not state.get("response"):
+                parts = []
+                for result in skill_results:
+                    if isinstance(result, dict) and "results" in result:
+                        for idx, item in enumerate(result.get("results") or [], start=1):
+                            title = item.get("title") or "(untitled)"
+                            url = item.get("url") or ""
+                            snippet = item.get("snippet") or ""
+                            parts.append(f"{idx}. {title}\n{url}\n{snippet}".strip())
+                    else:
+                        parts.append(json.dumps(result, indent=2, default=str))
+                text = "\n\n".join(parts) or text
 
         return {"response": text}
 
@@ -405,14 +418,20 @@ def _make_dogfood(memory: Any):
                         if matches:
                             path = matches[0]["file"]
                 if not path:
-                    return {"response": "Could not identify a file to improve. Specify a path like neuros/memory/manager.py."}
+                    return {
+                        "response": "Could not identify a file to improve. Specify a path like neuros/memory/manager.py.",
+                        "skill_used": "propose_improvement",
+                    }
 
                 await UnderstandFileSkill().run(path=path)
                 proposal_result = await ProposeImprovementSkill().run(
                     path=path, instruction=input_text
                 )
                 if not proposal_result.success:
-                    return {"response": f"Proposal failed: {proposal_result.error}"}
+                    return {
+                        "response": f"Proposal failed: {proposal_result.error}",
+                        "skill_used": "propose_improvement",
+                    }
 
                 p = proposal_result.data
                 text = (
@@ -425,19 +444,22 @@ def _make_dogfood(memory: Any):
                     f"Replacement:\n{p['replacement'][:200]}{'...' if len(p['replacement']) > 200 else ''}\n\n"
                     f"Reply 'apply {p['id']}' to apply, or 'reject {p['id']}' to discard."
                 )
-                return {"response": text}
+                return {"response": text, "skill_used": "propose_improvement"}
 
             if intent == "dogfood_read":
                 from neuros.skills.code.reader import ReadFileSkill, UnderstandFileSkill
 
                 path = _extract_path(input_text)
                 if not path:
-                    return {"response": "Could not identify a file to read."}
+                    return {"response": "Could not identify a file to read.", "skill_used": "read_file"}
                 path = _resolve_obvious_path(path)
 
                 read_result = await ReadFileSkill().run(path=path)
                 if not read_result.success:
-                    return {"response": f"Read failed: {read_result.error}"}
+                    return {
+                        "response": f"Read failed: {read_result.error}",
+                        "skill_used": "read_file",
+                    }
 
                 understand_result = await UnderstandFileSkill().run(path=path)
                 summary = (
@@ -451,7 +473,8 @@ def _make_dogfood(memory: Any):
                         f"File: {data['path']} ({data['line_count']} lines)\n\n"
                         f"Summary:\n{summary}\n\n"
                         f"Content:\n{data['content']}"
-                    )
+                    ),
+                    "skill_used": "read_file,understand_file",
                 }
 
             if intent == "dogfood_understand":
@@ -459,13 +482,19 @@ def _make_dogfood(memory: Any):
 
                 path = _extract_path(input_text)
                 if not path:
-                    return {"response": "Could not identify a file to explain."}
+                    return {
+                        "response": "Could not identify a file to explain.",
+                        "skill_used": "understand_file",
+                    }
                 path = _resolve_obvious_path(path)
 
                 focus = input_text
                 result = await UnderstandFileSkill().run(path=path, focus=focus)
                 if not result.success:
-                    return {"response": f"Understand failed: {result.error}"}
+                    return {
+                        "response": f"Understand failed: {result.error}",
+                        "skill_used": "understand_file",
+                    }
 
                 data = result.data
                 components = ", ".join(data.get("key_components", [])[:12])
@@ -474,7 +503,8 @@ def _make_dogfood(memory: Any):
                         f"File: {data['path']}\n\n"
                         f"{data['summary']}\n\n"
                         f"Key components: {components or '(none found)'}"
-                    )
+                    ),
+                    "skill_used": "understand_file",
                 }
 
             if intent == "dogfood_apply":
@@ -484,20 +514,27 @@ def _make_dogfood(memory: Any):
                 else:
                     pending = await postgres.latest_proposal(status="pending")
                     if pending is None:
-                        return {"response": "No pending proposals to apply."}
+                        return {
+                            "response": "No pending proposals to apply.",
+                            "skill_used": "apply_change",
+                        }
                     proposal_id = pending.id
 
                 await postgres.update_proposal_status(proposal_id, "approved")
                 ar = await ApplyChangeSkill().run(proposal_id=proposal_id, confirmed=True)
                 if not ar.success:
-                    return {"response": f"Apply failed: {ar.error}"}
+                    return {
+                        "response": f"Apply failed: {ar.error}",
+                        "skill_used": "apply_change",
+                    }
 
                 data = ar.data
                 if not data["tests_passed"]:
                     return {
                         "response": (
                             f"❌ Tests failed; changes reverted.\n\n{data['test_output'][:1500]}"
-                        )
+                        ),
+                        "skill_used": "apply_change",
                     }
 
                 diff = await GitDiffSkill().run(path=None)
@@ -506,20 +543,21 @@ def _make_dogfood(memory: Any):
                     "response": (
                         f"✅ Tests passed. Diff:\n{diff_text}\n\n"
                         "Commit this change? Reply 'commit' to confirm."
-                    )
+                    ),
+                    "skill_used": "apply_change,git_diff",
                 }
 
             if intent == "dogfood_commit":
                 applied = await postgres.latest_proposal(status="applied")
                 if applied is None:
-                    return {"response": "No applied proposals to commit."}
+                    return {"response": "No applied proposals to commit.", "skill_used": "git_commit"}
 
                 msg = f"improve({applied.path}): {applied.summary}"
                 cr = await GitCommitSkill().run(message=msg, confirmed=True)
                 if not cr.success:
-                    return {"response": f"Commit failed: {cr.error}"}
+                    return {"response": f"Commit failed: {cr.error}", "skill_used": "git_commit"}
                 d = cr.data
-                return {"response": f"✅ Committed: {d['hash']}\n{d['message']}"}
+                return {"response": f"✅ Committed: {d['hash']}\n{d['message']}", "skill_used": "git_commit"}
 
             if intent == "dogfood_reject":
                 m = _UUID_RE.search(input_text)
@@ -528,11 +566,15 @@ def _make_dogfood(memory: Any):
                 else:
                     pending = await postgres.latest_proposal(status="pending")
                     if pending is None:
-                        return {"response": "No pending proposals to reject."}
+                        return {
+                            "response": "No pending proposals to reject.",
+                            "skill_used": "reject_proposal",
+                        }
                     proposal_id = pending.id
                 await postgres.update_proposal_status(proposal_id, "rejected")
                 return {
-                    "response": "Proposal discarded. Ask me to propose a different improvement."
+                    "response": "Proposal discarded. Ask me to propose a different improvement.",
+                    "skill_used": "reject_proposal",
                 }
         except Exception as e:
             logger.exception("dogfood: error: %s", e)

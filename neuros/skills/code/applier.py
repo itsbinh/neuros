@@ -34,9 +34,7 @@ class ApplyChangeSkill(BaseSkill):
         if proposal is None:
             return SkillResult.fail(f"Proposal not found: {proposal_id}")
         if proposal.status != "approved":
-            return SkillResult.fail(
-                f"Proposal status is {proposal.status}, must be 'approved'"
-            )
+            return SkillResult.fail(f"Proposal status is {proposal.status}, must be 'approved'")
 
         try:
             target = resolve_safe(proposal.path)
@@ -77,9 +75,7 @@ class ApplyChangeSkill(BaseSkill):
             and not test_data.get("success")
             and ("no tests ran" in output_text or "collected 0 items" in output_text)
         ):
-            logger.warning(
-                "Specified tests not found — running full suite for safety check"
-            )
+            logger.warning("Specified tests not found — running full suite for safety check")
             test_result = await tester.run(test_path="tests/")
             test_data = test_result.data or {}
 
@@ -88,9 +84,7 @@ class ApplyChangeSkill(BaseSkill):
 
         if tests_passed:
             backup_path.unlink(missing_ok=True)
-            await postgres.update_proposal_status(
-                proposal_id, "applied", test_result=test_output
-            )
+            await postgres.update_proposal_status(proposal_id, "applied", test_result=test_output)
             return SkillResult.ok(
                 {
                     "proposal_id": proposal_id,

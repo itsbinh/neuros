@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -79,7 +78,9 @@ class GraphitiStore:
             )
             embedder = OpenAIEmbedder(config=embed_config)
 
-            cross_encoder_config = LLMConfig(api_key="local", model=self._llm_model, base_url=base_v1)
+            cross_encoder_config = LLMConfig(
+                api_key="local", model=self._llm_model, base_url=base_v1
+            )
             cross_encoder = OpenAIRerankerClient(config=cross_encoder_config)
 
             self._client = Graphiti(

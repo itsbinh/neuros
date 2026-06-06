@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, desc, func, select
+from sqlalchemy import Column, DateTime, Integer, String, Text, desc, select
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -24,6 +23,7 @@ class Base(DeclarativeBase):
 
 # ── Tables ───────────────────────────────────────────────────────
 
+
 class Interaction(Base):
     __tablename__ = "interactions"
 
@@ -34,7 +34,7 @@ class Interaction(Base):
     skill_used = Column(String(128), nullable=True)
     model_used = Column(String(128), nullable=True)
     latency_ms = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     @property
     def input_text(self) -> str:
@@ -60,7 +60,7 @@ class Fact(Base):
     key = Column(String(256), nullable=False, index=True)
     value = Column(Text, nullable=False)
     source = Column(String(256), nullable=True)
-    ts = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    ts = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class Config(Base):
@@ -82,7 +82,7 @@ class Proposal(Base):
     replacement = Column(Text, nullable=False)
     tests_affected = Column(ARRAY(Text), nullable=True)
     status = Column(String(32), nullable=False, default="pending", index=True)
-    proposed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    proposed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     applied_at = Column(DateTime(timezone=True), nullable=True)
     test_result = Column(Text, nullable=True)
 
@@ -161,7 +161,7 @@ class PostgresStore:
     # ── Proposals ─────────────────────────────────────────────────
 
     @staticmethod
-    def _proposal_to_model(row: "Proposal") -> ProposedChange:
+    def _proposal_to_model(row: Proposal) -> ProposedChange:
         return ProposedChange(
             id=row.id,
             path=row.path,
@@ -189,7 +189,7 @@ class PostgresStore:
                 replacement=proposal.replacement,
                 tests_affected=proposal.tests_affected or [],
                 status=proposal.status,
-                proposed_at=proposal.proposed_at or datetime.now(timezone.utc),
+                proposed_at=proposal.proposed_at or datetime.now(UTC),
                 applied_at=proposal.applied_at,
                 test_result=proposal.test_result,
             )
@@ -226,7 +226,7 @@ class PostgresStore:
             if test_result is not None:
                 row.test_result = test_result
             if status == "applied":
-                row.applied_at = datetime.now(timezone.utc)
+                row.applied_at = datetime.now(UTC)
             await session.commit()
 
     async def latest_proposal(self, status: str = "pending") -> ProposedChange | None:

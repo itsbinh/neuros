@@ -73,9 +73,14 @@ class ForgetSkill(Skill):
         if not manager:
             return SkillResult.fail("Memory manager not initialized", skill_name="forget")
 
-        ok = await manager.invalidate_fact(subject, fact, reason=fact)
+        graph_ok = await manager.invalidate_fact(subject, fact, reason=fact)
+        qdrant_deleted = await manager.forget_by_query(f"{subject} {fact}")
         return SkillResult.ok(
-            {"invalidated": 1 if ok else 0, "subject": subject},
+            {
+                "invalidated": 1 if graph_ok else 0,
+                "qdrant_deleted": qdrant_deleted,
+                "subject": subject,
+            },
             skill_name="forget",
         )
 
