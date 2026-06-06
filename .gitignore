@@ -8,3 +8,5 @@ dist/
 .ruff_cache/
 *.log
 .DS_Store
+macos/NeurOS/.build/
+macos/NeurOS/.swiftpm/

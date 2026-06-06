@@ -50,7 +50,7 @@ Done when:
 - Existing Python tests still pass.
 
 Verification:
-- `xcodebuild -project macos/NeurOS/NeurOS.xcodeproj -scheme NeurOS build`
+- `xcodebuild -scheme NeurOS -destination 'platform=macOS' build` from `macos/NeurOS`
 - `pytest -q`
 
 ## Phase 2: Agent API Client
