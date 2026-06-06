@@ -38,6 +38,7 @@ def _discover_skills(package_name: str = "neuros.skills") -> list[type[BaseSkill
                 inspect.isclass(attr)
                 and issubclass(attr, BaseSkill)
                 and attr is not BaseSkill
+                and not inspect.isabstract(attr)
             ):
                 discovered.append(attr)
     return discovered
@@ -77,3 +78,48 @@ def auto_register() -> None:
         instance = cls()
         register(instance)
     logger.info("Auto-registered %d skills", len(_skills))
+
+
+class SkillRegistry:
+    """OO wrapper around the module-level registry used by main.py."""
+
+    def __init__(self) -> None:
+        self._skills: dict[str, BaseSkill] = _skills
+
+    @classmethod
+    def auto_discover(cls) -> SkillRegistry:
+        auto_register()
+        return cls()
+
+    def all_skills(self) -> list[BaseSkill]:
+        return list(self._skills.values())
+
+    def get(self, name: str) -> BaseSkill | None:
+        return self._skills.get(name)
+
+    async def dispatch(self, skill_name: str, **params: Any) -> SkillResult:
+        return await dispatch(skill_name, **params)
+
+    async def execute(self, skill_name: str, **params: Any) -> SkillResult:
+        """Execute a registered skill.
+
+        Graph nodes use this name when handling model tool calls.
+        """
+        return await self.dispatch(skill_name, **params)
+
+    def to_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return OpenAI-compatible tool schemas for registered skills."""
+        schemas: list[dict[str, Any]] = []
+        for skill in self.all_skills():
+            parameters = skill.parameters or {"type": "object", "properties": {}}
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": skill.name,
+                        "description": skill.description,
+                        "parameters": parameters,
+                    },
+                }
+            )
+        return schemas

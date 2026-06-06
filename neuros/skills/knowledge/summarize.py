@@ -25,10 +25,12 @@ class SummarizeSkill(BaseSkill):
             for text in texts:
                 summary = await chat(
                     model=model.name,
-                    messages=[{
-                        "role": "user",
-                        "content": f"Summarize this in 2-3 sentences:\n\n{text}",
-                    }],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"Summarize this in 2-3 sentences:\n\n{text}",
+                        }
+                    ],
                     base_url=model.base_url,
                 )
                 chunks.append(summary)
@@ -40,10 +42,12 @@ class SummarizeSkill(BaseSkill):
             else:
                 final = await chat(
                     model=model.name,
-                    messages=[{
-                        "role": "user",
-                        "content": f"Combine these summaries into one cohesive summary:\n\n{combined}",
-                    }],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"Combine these summaries into one cohesive summary:\n\n{combined}",
+                        }
+                    ],
                     base_url=model.base_url,
                 )
 

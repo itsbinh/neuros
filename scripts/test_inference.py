@@ -35,15 +35,9 @@ async def main() -> None:
     print("=" * 40)
 
     results = []
-    results.append(await test_endpoint(
-        "Vision", settings.lts1_base_url, settings.model_vision
-    ))
-    results.append(await test_endpoint(
-        "Fast", settings.lts1_base_url, settings.model_fast
-    ))
-    results.append(await test_endpoint(
-        "Local", settings.mac_mini_url, settings.model_local
-    ))
+    results.append(await test_endpoint("Vision", settings.lts1_base_url, settings.model_vision))
+    results.append(await test_endpoint("Fast", settings.lts1_base_url, settings.model_fast))
+    results.append(await test_endpoint("Local", settings.mac_mini_url, settings.model_local))
 
     print("=" * 40)
     passed = sum(results)

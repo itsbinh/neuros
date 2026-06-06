@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.neuros.agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Volumes/nvme/projects/neuros/.venv/bin/uvicorn</string>
+    <string>neuros.main:app</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8080</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Volumes/nvme/projects/neuros</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Volumes/nvme/projects/neuros/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/binh/Library/Logs/neuros/agent.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/binh/Library/Logs/neuros/agent.err</string>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

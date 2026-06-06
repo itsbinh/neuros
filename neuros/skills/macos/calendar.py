@@ -13,7 +13,9 @@ logger = logging.getLogger("neuros.skills.macos.calendar")
 async def _run_applescript(script: str) -> str:
     """Execute an AppleScript and return stdout."""
     proc = await asyncio.create_subprocess_exec(
-        "osascript", "-e", script,
+        "osascript",
+        "-e",
+        script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -58,7 +60,7 @@ class CalendarSkill(BaseSkill):
 
     async def _query(self, params: dict) -> SkillResult:
         scope = params.get("action", "day")  # "day" or "week"
-        script = f'''
+        script = """
             tell application "Calendar"
                 set output to ""
                 repeat with cal in calendars
@@ -69,7 +71,7 @@ class CalendarSkill(BaseSkill):
                 end repeat
                 return output
             end tell
-        '''
+        """
         result = await _run_applescript(script)
         events = [e for e in result.split("\n") if e.strip()]
         return SkillResult.ok({"events": events, "scope": scope})

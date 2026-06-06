@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
 
 import paramiko
 
@@ -65,9 +64,7 @@ class SSHSkill(BaseSkill):
             conn = SSHConnection(host)
             # Run in thread pool to avoid blocking the event loop
             loop = asyncio.get_event_loop()
-            stdout, stderr, exit_code = await loop.run_in_executor(
-                None, conn.execute, command
-            )
+            stdout, stderr, exit_code = await loop.run_in_executor(None, conn.execute, command)
             conn.close()
 
             if exit_code != 0:

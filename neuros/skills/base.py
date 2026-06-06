@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logger = logging.getLogger("neuros.skills")
 
@@ -17,14 +17,24 @@ class SkillResult(BaseModel):
     success: bool
     data: Any = None
     error: str | None = None
+    skill_name: str | None = None
 
     @classmethod
-    def ok(cls, data: Any = None) -> SkillResult:
-        return cls(success=True, data=data)
+    def ok(cls, data: Any = None, skill_name: str | None = None) -> SkillResult:
+        return cls(success=True, data=data, skill_name=skill_name)
 
     @classmethod
-    def fail(cls, error: str) -> SkillResult:
-        return cls(success=False, error=error)
+    def fail(cls, error: str, skill_name: str | None = None) -> SkillResult:
+        return cls(success=False, error=error, skill_name=skill_name)
+
+    @property
+    def output(self) -> Any:
+        """Backward-compatible alias for older callers/tests."""
+        return self.data
+
+    @output.setter
+    def output(self, value: Any) -> None:
+        self.data = value
 
 
 class BaseSkill(ABC):
@@ -32,11 +42,22 @@ class BaseSkill(ABC):
 
     name: str = ""
     description: str = ""
+    parameters: dict[str, Any] = {}
 
     @abstractmethod
     async def run(self, **params: Any) -> SkillResult:
         """Execute the skill with given parameters."""
         ...
+
+
+class Skill(BaseSkill):
+    """Alternate base for skills that implement execute() instead of run()."""
+
+    async def run(self, **params: Any) -> SkillResult:
+        return await self.execute(**params)
+
+    @abstractmethod
+    async def execute(self, **params: Any) -> SkillResult: ...
 
 
 def skill(name: str, description: str = ""):
@@ -47,8 +68,10 @@ def skill(name: str, description: str = ""):
         class RemindersSkill(BaseSkill):
             ...
     """
+
     def wrapper(cls: type) -> type:
         cls.name = name
         cls.description = description or cls.__doc__ or ""
         return cls
+
     return wrapper

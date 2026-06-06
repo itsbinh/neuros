@@ -24,10 +24,12 @@ class SearXNGSkill(BaseSkill):
 
         try:
             results = await self._search(query, n=n)
-            return SkillResult.ok({
-                "results": [r.model_dump() for r in results],
-                "count": len(results),
-            })
+            return SkillResult.ok(
+                {
+                    "results": [r.model_dump() for r in results],
+                    "count": len(results),
+                }
+            )
         except Exception as exc:
             return SkillResult.fail(str(exc))
 
@@ -47,10 +49,12 @@ class SearXNGSkill(BaseSkill):
 
         results = []
         for item in data.get("results", [])[:n]:
-            results.append(SearchResult(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                snippet=item.get("content", "") or item.get("description", ""),
-                source=item.get("engine", "unknown"),
-            ))
+            results.append(
+                SearchResult(
+                    title=item.get("title", ""),
+                    url=item.get("url", ""),
+                    snippet=item.get("content", "") or item.get("description", ""),
+                    source=item.get("engine", "unknown"),
+                )
+            )
         return results

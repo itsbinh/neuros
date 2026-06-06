@@ -13,7 +13,9 @@ logger = logging.getLogger("neuros.skills.macos.reminders")
 async def _run_applescript(script: str) -> str:
     """Execute an AppleScript and return stdout."""
     proc = await asyncio.create_subprocess_exec(
-        "osascript", "-e", script,
+        "osascript",
+        "-e",
+        script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
