@@ -228,7 +228,7 @@ local OVERLAY_HTML = [[
     rtext.textContent = '';
     meta.style.display = 'none';
     meta.innerHTML = '';
-    window.webkit.messageHandlers.resize.postMessage(130);
+    window.__n_msg = {type:'resize', body:130};
   }
 
   function setLoading(txt) {
@@ -278,9 +278,7 @@ local OVERLAY_HTML = [[
     }
     if (hasMeta) meta.style.display = 'flex';
 
-    window.webkit.messageHandlers.resize.postMessage(
-      document.getElementById('panel').scrollHeight
-    );
+    window.__n_msg = {type:'resize', body: document.getElementById('panel').scrollHeight};
     setTimeout(() => q.focus(), 40);
   }
 
@@ -293,17 +291,17 @@ local OVERLAY_HTML = [[
       const v = q.value.trim();
       if (!v) return;
       setLoading(v);
-      window.webkit.messageHandlers.query.postMessage(v);
+      window.__n_msg = {type:'query', body:v};
     }
     if (e.key === 'Escape')
-      window.webkit.messageHandlers.dismiss.postMessage('');
+      window.__n_msg = {type:'dismiss'};
     if (e.key === 'ArrowUp' && q.value === '') {
       e.preventDefault();
-      window.webkit.messageHandlers.historyUp.postMessage('');
+      window.__n_msg = {type:'historyUp'};
     }
     if (e.key === 'ArrowDown' && q.value === '') {
       e.preventDefault();
-      window.webkit.messageHandlers.historyDown.postMessage('');
+      window.__n_msg = {type:'historyDown'};
     }
   });
 
@@ -317,11 +315,11 @@ local OVERLAY_HTML = [[
 
   document.getElementById('btn-gear').onclick = () => {
     setLoading('open settings');
-    window.webkit.messageHandlers.query.postMessage('open settings');
+    window.__n_msg = {type:'query', body:'open settings'};
   };
   document.getElementById('btn-code').onclick = () => {
     setLoading('git status');
-    window.webkit.messageHandlers.query.postMessage('git status');
+    window.__n_msg = {type:'query', body:'git status'};
   };
   document.getElementById('btn-attach').onclick = () => q.focus();
   document.getElementById('btn-web').onclick    = () => q.focus();
@@ -442,51 +440,38 @@ local function buildWebview()
     obj:allowTextEntry(true)
     obj:html(OVERLAY_HTML)
 
-    -- resize message from JS
-    obj:userContentController():addScriptMessageHandler(
-        hs.webview.usercontent.new("resize"),
-        function(msg)
+    -- polling-based message bridge (userContentController not available in HS < 6951)
+    hs.timer.doEvery(0.05, function()
+        if not isVisible then return end
+        local ok, result = pcall(obj.evaluateJavaScript, obj, 'try { return JSON.stringify(__n_msg); } catch(e) { return null; }')
+        if not ok or not result or result == 'null' then return end
+        local msgOk, msg = pcall(hs.json.decode, result)
+        if not msgOk or type(msg) ~= 'table' or not msg.type then return end
+
+        -- clear the message
+        obj:evaluateJavaScript('__n_msg = null')
+
+        if msg.type == 'resize' then
             local h = tonumber(msg.body) or PANEL_H_MIN
             h = math.max(PANEL_H_MIN, math.min(h, PANEL_H_MAX))
             obj:setFrame(panelFrame(h))
-        end
-    )
-
-    -- query submitted from JS
-    obj:userContentController():addScriptMessageHandler(
-        hs.webview.usercontent.new("query"),
-        function(msg)
+        elseif msg.type == 'query' then
             submitQuery(msg.body)
-        end
-    )
-
-    -- dismiss from JS (ESC key)
-    obj:userContentController():addScriptMessageHandler(
-        hs.webview.usercontent.new("dismiss"),
-        function(_) hideOverlay() end
-    )
-
-    -- history navigation
-    obj:userContentController():addScriptMessageHandler(
-        hs.webview.usercontent.new("historyUp"),
-        function(msg)
+        elseif msg.type == 'dismiss' then
+            hideOverlay()
+        elseif msg.type == 'historyUp' then
             historyIdx = math.min(historyIdx + 1, #history)
             if history[historyIdx] then
                 obj:evaluateJavaScript(
-                    "setInputValue("..hs.json.encode(history[historyIdx])..")"
+                    'setInputValue(' .. hs.json.encode(history[historyIdx]) .. ')'
                 )
             end
-        end
-    )
-
-    obj:userContentController():addScriptMessageHandler(
-        hs.webview.usercontent.new("historyDown"),
-        function(msg)
+        elseif msg.type == 'historyDown' then
             historyIdx = math.max(historyIdx - 1, 0)
-            local val = history[historyIdx] or ""
-            obj:evaluateJavaScript("setInputValue("..hs.json.encode(val)..")")
+            local val = history[historyIdx] or ''
+            obj:evaluateJavaScript('setInputValue(' .. hs.json.encode(val) .. ')')
         end
-    )
+    end)
 
     return obj
 end
