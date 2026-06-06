@@ -440,9 +440,6 @@ local function buildWebview()
     obj:windowStyle({})
     obj:level(hs.drawing.windowLevels.modalPanel)
     obj:allowTextEntry(true)
-    obj:transparent(true)
-    obj:opaque(false)
-    obj:shadow(false)
     obj:html(OVERLAY_HTML)
 
     -- resize message from JS
