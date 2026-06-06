@@ -454,7 +454,7 @@ local function buildWebview()
         if msg.type == 'resize' then
             local h = tonumber(msg.body) or PANEL_H_MIN
             h = math.max(PANEL_H_MIN, math.min(h, PANEL_H_MAX))
-            obj:setFrame(panelFrame(h))
+            obj:hswindow():setFrame(panelFrame(h))
         elseif msg.type == 'query' then
             submitQuery(msg.body)
         elseif msg.type == 'dismiss' then
@@ -480,7 +480,7 @@ end
 
 function showOverlay()
     if not wv then wv = buildWebview() end
-    wv:setFrame(panelFrame(PANEL_H_MIN))
+    wv:hswindow():setFrame(panelFrame(PANEL_H_MIN))
     wv:show()
     wv:hswindow():focus()
     hs.timer.doAfter(0.05, function()
